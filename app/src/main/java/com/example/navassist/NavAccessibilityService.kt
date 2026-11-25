@@ -1,6 +1,7 @@
 package com.example.navassist
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
 
 class NavAccessibilityService : AccessibilityService() {
@@ -14,7 +15,7 @@ class NavAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    override fun onUnbind(intent: android.content.Intent?): Boolean {
+    override fun onUnbind(intent: Intent?): Boolean {
         instance = null
         return super.onUnbind(intent)
     }
