@@ -8,6 +8,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
@@ -16,16 +17,18 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.Icon
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.MediaStore
 import android.provider.Settings
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -39,36 +42,58 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import kotlin.math.abs
 import kotlin.math.hypot
 
 /**
- * Foreground service that draws the draggable floating orb and, when tapped,
- * a glass-style menu with all the navigation / utility buttons.
+ * Foreground service that draws the draggable floating orb and, when tapped, a glass-style menu
+ * with navigation / utility buttons. Orb gestures (tap, double tap, long press) are configurable.
  */
 class OverlayService : Service() {
 
     private lateinit var wm: WindowManager
     private val handler = Handler(Looper.getMainLooper())
-    private var orb: ImageView? = null
+    private var orb: FrameLayout? = null
     private var orbLp: WindowManager.LayoutParams? = null
     private var scrim: FrameLayout? = null
     private var torchOn = false
+    private var hidden = false
+    private var recHidden = false
+    private var tempHidden = false
+    private var peeked = false
+    private var dockX = 0
+    private var menuPage = 0
+    private var pendingTap = false
+    private var longFired = false
+    private var sliderTouch = false
+
+    private val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
+    private val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
+
+    private val orbKeys = setOf(
+        Prefs.K_OPACITY, Prefs.K_ORB_SCALE, Prefs.K_ORB_ICON, Prefs.K_ORB_SHAPE, Prefs.K_ACCENT
+    )
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == Prefs.K_OPACITY && scrim == null) {
-            orb?.alpha = idleAlpha()
-        } else if (key == Prefs.K_ORB_SIZE && scrim == null && orb != null) {
-            handler.post {
-                orb?.let { runCatching { wm.removeView(it) } }
-                orb = null
-                addOrb()
-            }
+        if (key in orbKeys && scrim == null && orb != null) {
+            handler.post { rebuildOrb() }
         }
     }
 
     private val fade = Runnable {
-        orb?.animate()?.alpha(idleAlpha())?.setDuration(400)?.start()
+        orb?.animate()?.alpha(idleAlpha())?.setDuration(anim(400))?.start()
+        peekOrb()
     }
+    private val tapRunnable = Runnable {
+        pendingTap = false
+        runGesture(Prefs.tapAction(this))
+    }
+    private val longRunnable = Runnable {
+        longFired = true
+        haptic(orb)
+        runGesture(Prefs.longAction(this))
+    }
+    private val unhide = Runnable { showOrb() }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -76,6 +101,7 @@ class OverlayService : Service() {
         super.onCreate()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         running = true
+        instance = this
         Prefs.of(this).registerOnSharedPreferenceChangeListener(prefListener)
     }
 
@@ -91,6 +117,9 @@ class OverlayService : Service() {
             return START_NOT_STICKY
         }
         if (orb == null) addOrb()
+        if (intent?.action == ACTION_TOGGLE) {
+            if (hidden) showOrb() else hideOrb()
+        }
         return START_STICKY
     }
 
@@ -101,19 +130,32 @@ class OverlayService : Service() {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Floating assistant", NotificationManager.IMPORTANCE_LOW)
         )
+        startForeground(1, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+    }
+
+    private fun buildNotification(): Notification {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
-        val stop = PendingIntent.getService(
-            this, 1,
-            Intent(this, OverlayService::class.java).setAction(ACTION_STOP),
+        val toggle = PendingIntent.getService(
+            this, 2, Intent(this, OverlayService::class.java).setAction(ACTION_TOGGLE),
             PendingIntent.FLAG_IMMUTABLE
         )
-        val notification = Notification.Builder(this, CHANNEL_ID)
+        val stop = PendingIntent.getService(
+            this, 1, Intent(this, OverlayService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_orb)
-            .setContentTitle("NavAssist is active")
-            .setContentText("Tap the floating orb to open your buttons")
+            .setContentTitle(if (hidden) "NavAssist orb is hidden" else "NavAssist is active")
+            .setContentText(if (hidden) "Tap “Show orb” to bring it back" else "Tap the floating orb to open your buttons")
             .setContentIntent(open)
+            .addAction(
+                Notification.Action.Builder(
+                    Icon.createWithResource(this, if (hidden) R.drawable.ic_orb else R.drawable.ic_visibility_off),
+                    if (hidden) "Show orb" else "Hide orb", toggle
+                ).build()
+            )
             .addAction(
                 Notification.Action.Builder(
                     Icon.createWithResource(this, R.drawable.ic_close), "Stop", stop
@@ -121,47 +163,89 @@ class OverlayService : Service() {
             )
             .setOngoing(true)
             .build()
-        startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+    }
+
+    private fun updateNotification() {
+        getSystemService(NotificationManager::class.java).notify(1, buildNotification())
     }
 
     // ---------------------------------------------------------------- orb
 
     private fun screen(): Rect = wm.currentWindowMetrics.bounds
-
     private fun idleAlpha(): Float = Prefs.opacity(this) / 100f
+    private fun anim(base: Long): Long =
+        (base * (2f - 1.5f * Prefs.animSpeed(this) / 100f)).toLong().coerceAtLeast(30L)
+
+    private fun haptic(v: View?) {
+        if (Prefs.haptics(this)) v?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
 
     private fun scheduleFade() {
         handler.removeCallbacks(fade)
         handler.postDelayed(fade, 2500)
     }
 
+    private fun applyVisibility() {
+        val show = !hidden && !recHidden && !tempHidden && scrim == null
+        orb?.visibility = if (show) View.VISIBLE else View.INVISIBLE
+    }
+
+    private fun buildOrbView(size: Int): FrameLayout {
+        val box = FrameLayout(this)
+        val fill = Themes.withAlpha(0xFF0B0F19.toInt(), 62)
+        val ring = Themes.withAlpha(Themes.accent(this), 65)
+        box.background = if (Prefs.orbShape(this) == 0) Ui.oval(fill, ring, dp(1))
+        else Ui.shape(fill, size * 0.28f, ring, dp(1))
+        val key = Prefs.orbIcon(this)
+        if (key.startsWith("emoji:")) {
+            val t = TextView(this)
+            t.text = key.removePrefix("emoji:")
+            t.gravity = Gravity.CENTER
+            t.setTextSize(TypedValue.COMPLEX_UNIT_PX, size * 0.5f)
+            box.addView(t, FrameLayout.LayoutParams(size, size))
+        } else {
+            val iv = ImageView(this)
+            iv.setImageResource(OrbIcons.res(key))
+            iv.scaleType = ImageView.ScaleType.FIT_CENTER
+            val pad = (size * 0.25f).toInt()
+            iv.setPadding(pad, pad, pad, pad)
+            box.addView(iv, FrameLayout.LayoutParams(size, size))
+        }
+        box.contentDescription = "NavAssist menu"
+        box.alpha = idleAlpha()
+        return box
+    }
+
+    private fun rebuildOrb() {
+        val old = orb
+        val oldLp = orbLp
+        if (old != null) runCatching { wm.removeView(old) }
+        orb = null
+        orbLp = null
+        peeked = false
+        addOrb(oldLp?.x, oldLp?.y)
+    }
+
     @SuppressLint("ClickableViewAccessibility")
-    private fun addOrb() {
-        val size = dp(when (Prefs.orbSize(this)) { 0 -> 40; 2 -> 58; else -> 48 })
+    private fun addOrb(keepX: Int? = null, keepY: Int? = null) {
+        val size = dp(48) * Prefs.orbScale(this) / 100
         val b = screen()
         val lp = WindowManager.LayoutParams(
             size, size,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         )
         lp.gravity = Gravity.TOP or Gravity.START
-        val savedX = Prefs.orbX(this)
-        val savedY = Prefs.orbY(this)
+        val savedX = keepX ?: Prefs.orbX(this)
+        val savedY = keepY ?: Prefs.orbY(this)
         lp.x = if (savedX >= 0) savedX.coerceIn(0, b.width() - size) else b.width() - size - dp(4)
         lp.y = if (savedY >= 0) savedY.coerceIn(0, b.height() - size) else b.height() / 3
+        dockX = if (lp.x + size / 2 < b.width() / 2) dp(4) else b.width() - size - dp(4)
 
-        val iv = ImageView(this)
-        iv.setImageResource(R.drawable.ic_orb)
-        iv.scaleType = ImageView.ScaleType.FIT_CENTER
-        val pad = size / 4
-        iv.setPadding(pad, pad, pad, pad)
-        iv.background = Ui.oval(0x990B0F19.toInt(), 0x996366F1.toInt(), dp(1))
-        iv.contentDescription = "NavAssist menu"
-        iv.alpha = idleAlpha()
-
+        val box = buildOrbView(size)
         val slop = ViewConfiguration.get(this).scaledTouchSlop.toFloat()
-        iv.setOnTouchListener(object : View.OnTouchListener {
+        box.setOnTouchListener(object : View.OnTouchListener {
             var startX = 0
             var startY = 0
             var touchX = 0f
@@ -174,17 +258,27 @@ class OverlayService : Service() {
                         handler.removeCallbacks(fade)
                         v.animate().cancel()
                         v.alpha = 1f
-                        v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(90).start()
+                        v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(anim(90)).start()
+                        if (peeked) {
+                            lp.x = dockX
+                            peeked = false
+                            wm.updateViewLayout(v, lp)
+                        }
                         startX = lp.x
                         startY = lp.y
                         touchX = e.rawX
                         touchY = e.rawY
                         dragging = false
+                        longFired = false
+                        handler.postDelayed(longRunnable, ViewConfiguration.getLongPressTimeout().toLong())
                     }
                     MotionEvent.ACTION_MOVE -> {
                         val dx = e.rawX - touchX
                         val dy = e.rawY - touchY
-                        if (!dragging && hypot(dx, dy) > slop) dragging = true
+                        if (!dragging && hypot(dx, dy) > slop) {
+                            dragging = true
+                            handler.removeCallbacks(longRunnable)
+                        }
                         if (dragging) {
                             val bb = screen()
                             lp.x = (startX + dx.toInt()).coerceIn(0, bb.width() - size)
@@ -193,12 +287,12 @@ class OverlayService : Service() {
                         }
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        v.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+                        handler.removeCallbacks(longRunnable)
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(anim(120)).start()
                         if (dragging) {
                             snap(v, lp)
-                        } else if (e.actionMasked == MotionEvent.ACTION_UP) {
-                            if (Prefs.haptics(this@OverlayService)) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                            expand()
+                        } else if (e.actionMasked == MotionEvent.ACTION_UP && !longFired) {
+                            onTap()
                         }
                         scheduleFade()
                     }
@@ -207,28 +301,48 @@ class OverlayService : Service() {
             }
         })
 
-        wm.addView(iv, lp)
-        orb = iv
+        wm.addView(box, lp)
+        orb = box
         orbLp = lp
+        applyVisibility()
         scheduleFade()
+    }
+
+    private fun animateX(v: View, lp: WindowManager.LayoutParams, target: Int, ms: Long) {
+        val a = ValueAnimator.ofInt(lp.x, target)
+        a.duration = ms
+        a.interpolator = DecelerateInterpolator()
+        a.addUpdateListener {
+            lp.x = it.animatedValue as Int
+            if (v.isAttachedToWindow) wm.updateViewLayout(v, lp)
+        }
+        a.start()
     }
 
     private fun snap(v: View, lp: WindowManager.LayoutParams) {
         val b = screen()
+        peeked = false
         if (!Prefs.snapToEdge(this)) {
+            dockX = lp.x
             Prefs.setOrb(this, lp.x, lp.y)
             return
         }
         val target = if (lp.x + lp.width / 2 < b.width() / 2) dp(4) else b.width() - lp.width - dp(4)
-        val anim = ValueAnimator.ofInt(lp.x, target)
-        anim.duration = 220
-        anim.interpolator = DecelerateInterpolator()
-        anim.addUpdateListener {
-            lp.x = it.animatedValue as Int
-            if (v.isAttachedToWindow) wm.updateViewLayout(v, lp)
-        }
-        anim.start()
+        dockX = target
+        animateX(v, lp, target, anim(220))
         Prefs.setOrb(this, target, lp.y)
+    }
+
+    /** Slides the idle orb half off the screen edge so it covers less of the screen. */
+    private fun peekOrb() {
+        val v = orb ?: return
+        val lp = orbLp ?: return
+        if (!Prefs.peek(this) || !Prefs.snapToEdge(this) || scrim != null || peeked || !v.isAttachedToWindow) return
+        val b = screen()
+        val target = if (dockX + lp.width / 2 < b.width() / 2) -(lp.width * 0.55f).toInt()
+        else b.width() - (lp.width * 0.45f).toInt()
+        peeked = true
+        animateX(v, lp, target, anim(300))
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -237,6 +351,7 @@ class OverlayService : Service() {
         val lp = orbLp
         if (v != null && lp != null && scrim == null && v.isAttachedToWindow) {
             val b = screen()
+            peeked = false
             lp.x = lp.x.coerceIn(0, b.width() - lp.width)
             lp.y = lp.y.coerceIn(0, b.height() - lp.height)
             wm.updateViewLayout(v, lp)
@@ -244,11 +359,82 @@ class OverlayService : Service() {
         }
     }
 
+    // ---------------------------------------------------------------- gestures
+
+    private fun onTap() {
+        haptic(orb)
+        val dbl = Prefs.doubleAction(this)
+        if (dbl == "NONE") {
+            runGesture(Prefs.tapAction(this))
+            return
+        }
+        if (pendingTap) {
+            handler.removeCallbacks(tapRunnable)
+            pendingTap = false
+            runGesture(dbl)
+        } else {
+            pendingTap = true
+            handler.postDelayed(tapRunnable, ViewConfiguration.getDoubleTapTimeout().toLong())
+        }
+    }
+
+    private fun runGesture(code: String) {
+        when (code) {
+            "MENU" -> expand()
+            "HIDE" -> hideOrb()
+            "NONE" -> {}
+            else -> {
+                val a = try {
+                    NavAction.valueOf(code)
+                } catch (e: IllegalArgumentException) {
+                    null
+                } ?: return
+                if (a == NavAction.MIXER || a == NavAction.BRIGHTNESS || a == NavAction.FAVORITE) {
+                    expand()
+                    scrim?.let { showCard(it, subCard(a)) }
+                } else {
+                    onAction(a)
+                }
+            }
+        }
+    }
+
+    private fun hideOrb() {
+        hidden = true
+        hiddenFlag = true
+        handler.removeCallbacks(unhide)
+        val s = Prefs.hideSeconds(this)
+        if (s > 0) handler.postDelayed(unhide, s * 1000L)
+        applyVisibility()
+        updateNotification()
+        toast(
+            if (s > 0) "Orb hidden for $s seconds"
+            else "Orb hidden. Use the notification or the Quick Settings tile to bring it back"
+        )
+    }
+
+    private fun showOrb() {
+        hidden = false
+        hiddenFlag = false
+        handler.removeCallbacks(unhide)
+        applyVisibility()
+        updateNotification()
+        orb?.alpha = 1f
+        scheduleFade()
+    }
+
+    /** Called by RecordService so the orb does not appear in screen recordings. */
+    fun onRecordingState(recording: Boolean) {
+        handler.post {
+            recHidden = recording && Prefs.recHideOrb(this)
+            applyVisibility()
+        }
+    }
+
     // ---------------------------------------------------------------- menu window
 
     private fun expand() {
         if (scrim != null) return
-        orb?.visibility = View.INVISIBLE
         val s = FrameLayout(this)
         s.setBackgroundColor(0x70060A14.toInt())
         s.setOnClickListener { collapse() }
@@ -258,56 +444,118 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_BLUR_BEHIND,
             PixelFormat.TRANSLUCENT
         )
-        // Frosted-glass effect behind the menu (ignored on phones that disable window blur).
-        lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
         lp.blurBehindRadius = dp(24)
+        menuPage = 0
         showCard(s, menuCard())
         wm.addView(s, lp)
         scrim = s
+        applyVisibility()
         s.alpha = 0f
-        s.animate().alpha(1f).setDuration(150).start()
+        s.animate().alpha(1f).setDuration(anim(150)).start()
     }
 
     private fun collapse() {
-        mixerRows.clear()
+        sliderTouch = false
         handler.removeCallbacks(mixerTick)
+        mixerRows.clear()
         scrim?.let { runCatching { wm.removeView(it) } }
         scrim = null
-        orb?.let {
-            it.visibility = View.VISIBLE
-            it.alpha = 1f
-        }
+        applyVisibility()
+        orb?.alpha = 1f
         scheduleFade()
     }
 
     private fun showCard(parent: FrameLayout, card: View) {
         parent.removeAllViews()
-        parent.addView(card, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            Gravity.CENTER
-        ))
-        card.scaleX = 0.92f
-        card.scaleY = 0.92f
+        parent.addView(card, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER))
+        card.scaleX = 0.94f
+        card.scaleY = 0.94f
         card.alpha = 0f
-        card.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(160).start()
+        card.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(anim(150)).start()
     }
 
-    private fun baseCard(): LinearLayout {
-        val card = LinearLayout(this)
+    /** Card that detects a horizontal swipe (to flip menu pages) without stealing taps from its buttons. */
+    private inner class SwipeCard(c: Context, val onSwipe: (Int) -> Unit) : LinearLayout(c) {
+        private var downX = 0f
+        private var downY = 0f
+        private var downT = 0L
+
+        override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = ev.rawX
+                    downY = ev.rawY
+                    downT = ev.eventTime
+                }
+                MotionEvent.ACTION_UP -> {
+                    val dx = ev.rawX - downX
+                    val dy = ev.rawY - downY
+                    if (abs(dx) > dp(56) && abs(dx) > abs(dy) * 1.5f && ev.eventTime - downT < 600) {
+                        onSwipe(if (dx < 0) 1 else -1)
+                    }
+                }
+            }
+            return super.dispatchTouchEvent(ev)
+        }
+    }
+
+    private fun baseCard(swipe: ((Int) -> Unit)? = null): LinearLayout {
+        val card = if (swipe != null) SwipeCard(this, swipe) else LinearLayout(this)
         card.orientation = LinearLayout.VERTICAL
-        card.background = Ui.shape(0xE0111827.toInt(), dp(24).toFloat(), Ui.BORDER, dp(1))
+        val th = Themes.theme(this)
+        val a = Prefs.panelOpacity(this)
+        val bg = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Themes.withAlpha(th.top, a), Themes.withAlpha(th.bottom, a))
+        )
+        bg.cornerRadius = dp(24).toFloat()
+        bg.setStroke(dp(1), th.stroke)
+        card.background = bg
         card.setPadding(dp(14), dp(10), dp(14), dp(14))
         card.isClickable = true
         return card
     }
 
+    private fun subHeader(card: LinearLayout, title: String) {
+        val head = LinearLayout(this)
+        head.orientation = LinearLayout.HORIZONTAL
+        head.gravity = Gravity.CENTER_VERTICAL
+        val back = ImageView(this)
+        back.setImageResource(R.drawable.ic_back)
+        back.setPadding(dp(9), dp(9), dp(9), dp(9))
+        back.contentDescription = "Back to menu"
+        back.setOnClickListener {
+            handler.removeCallbacks(mixerTick)
+            mixerRows.clear()
+            scrim?.let { showCard(it, menuCard()) }
+        }
+        head.addView(back, LinearLayout.LayoutParams(dp(38), dp(38)))
+        val t = Ui.text(this, title, 15f, Ui.TEXT, weight = 600)
+        t.setPadding(dp(6), 0, 0, 0)
+        head.addView(t, LinearLayout.LayoutParams(0, WRAP, 1f))
+        card.addView(head)
+    }
+
+    private fun tileWidth(cols: Int): Int =
+        minOf(dp(78), (screen().width() - dp(24) - dp(28) - dp(16)) / cols)
+
     private fun menuCard(): View {
-        val actions = Prefs.enabledActions(this)
-        val card = baseCard()
+        val all = Prefs.enabledActions(this)
+        val cols = Prefs.menuCols(this)
+        val perPage = cols * Prefs.menuRows(this)
+        val pages = ((all.size + perPage - 1) / perPage).coerceAtLeast(1)
+        menuPage = menuPage.coerceIn(0, pages - 1)
+        val card = baseCard { dir ->
+            val np = (menuPage + dir).coerceIn(0, pages - 1)
+            if (np != menuPage) {
+                menuPage = np
+                scrim?.let { showCard(it, menuCard()) }
+            }
+        }
 
         val header = LinearLayout(this)
         header.orientation = LinearLayout.HORIZONTAL
@@ -315,27 +563,44 @@ class OverlayService : Service() {
         val logo = ImageView(this)
         logo.setImageResource(R.drawable.ic_orb)
         header.addView(logo, LinearLayout.LayoutParams(dp(22), dp(22)))
-        val title = Ui.text(this, "NavAssist", 15f, Ui.TEXT, bold = true)
+        val title = Ui.text(this, "NavAssist", 15f, Ui.TEXT, weight = 600)
         title.setPadding(dp(10), 0, 0, 0)
-        header.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(title, LinearLayout.LayoutParams(0, WRAP, 1f))
         val close = ImageView(this)
         close.setImageResource(R.drawable.ic_close)
         close.setPadding(dp(9), dp(9), dp(9), dp(9))
         close.alpha = 0.7f
-        close.contentDescription = "Close assistant"
-        close.setOnClickListener { stopSelf() }
+        close.contentDescription = "Close menu"
+        close.setOnClickListener { collapse() }
         header.addView(close, LinearLayout.LayoutParams(dp(38), dp(38)))
         card.addView(header)
 
-        val tileW = minOf(dp(72), (screen().width() - dp(24) - dp(28) - dp(16)) / 4)
-        for (rowActions in actions.chunked(4)) {
+        val tileW = tileWidth(cols)
+        val slice = all.drop(menuPage * perPage).take(perPage)
+        for (rowActions in slice.chunked(cols)) {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
             for (a in rowActions) row.addView(tile(a, tileW))
-            repeat(4 - rowActions.size) {
-                row.addView(View(this), LinearLayout.LayoutParams(tileW, 1))
-            }
+            repeat(cols - rowActions.size) { row.addView(View(this), LinearLayout.LayoutParams(tileW, 1)) }
             card.addView(row)
+        }
+
+        if (pages > 1) {
+            val dots = LinearLayout(this)
+            dots.orientation = LinearLayout.HORIZONTAL
+            dots.gravity = Gravity.CENTER
+            for (p in 0 until pages) {
+                val d = View(this)
+                d.background = Ui.oval(if (p == menuPage) Themes.accent(this) else 0x44FFFFFF)
+                val dl = LinearLayout.LayoutParams(dp(7), dp(7))
+                dl.setMargins(dp(4), dp(8), dp(4), 0)
+                dots.addView(d, dl)
+                d.setOnClickListener {
+                    menuPage = p
+                    scrim?.let { showCard(it, menuCard()) }
+                }
+            }
+            card.addView(dots, LinearLayout.LayoutParams(MATCH, WRAP))
         }
         return card
     }
@@ -345,22 +610,21 @@ class OverlayService : Service() {
         t.orientation = LinearLayout.VERTICAL
         t.gravity = Gravity.CENTER_HORIZONTAL
         t.setPadding(0, dp(7), 0, dp(5))
-        t.layoutParams = LinearLayout.LayoutParams(w, LinearLayout.LayoutParams.WRAP_CONTENT)
+        t.layoutParams = LinearLayout.LayoutParams(w, WRAP)
 
         val accent = a == NavAction.AI
-        val chipBg = if (accent) {
-            Ui.shape(Ui.VIOLET, dp(16).toFloat())
-        } else {
-            Ui.shape(0xB31F2937.toInt(), dp(16).toFloat(), 0xFF2B3647.toInt(), dp(1))
+        val chipBg = when {
+            accent -> Ui.shape(Themes.accent(this), dp(16).toFloat())
+            Prefs.iconTiles(this) -> Ui.shape(0x1FFFFFFF, dp(16).toFloat(), 0x26FFFFFF, dp(1))
+            else -> Ui.shape(0x00000000, dp(16).toFloat())
         }
         val chip = ImageView(this)
         chip.setImageResource(a.icon)
         chip.setPadding(dp(14), dp(14), dp(14), dp(14))
         chip.background = Ui.ripple(chipBg, dp(16).toFloat())
-        chip.isClickable = false
         t.addView(chip, LinearLayout.LayoutParams(dp(52), dp(52)))
 
-        val label = Ui.text(this, a.label, 11f, Ui.MUTED, weight = 500)
+        val label = Ui.text(this, a.label, 11f, 0xCCFFFFFF.toInt(), weight = 500)
         label.gravity = Gravity.CENTER
         label.maxLines = 1
         label.setPadding(0, dp(5), 0, 0)
@@ -368,21 +632,154 @@ class OverlayService : Service() {
 
         t.contentDescription = a.label
         t.setOnClickListener {
-            if (Prefs.haptics(this)) it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            haptic(it)
             onAction(a)
         }
         return t
     }
 
+    private fun subCard(a: NavAction): View = when (a) {
+        NavAction.MIXER -> mixerCard()
+        NavAction.BRIGHTNESS -> brightnessCard()
+        else -> favoritesCard()
+    }
+
+    private fun pill(text: String, onClick: () -> Unit): View {
+        val t = Ui.text(this, text, 13f, Color.WHITE, weight = 600)
+        t.gravity = Gravity.CENTER
+        t.setPadding(dp(16), dp(9), dp(16), dp(9))
+        t.background = Ui.ripple(Ui.shape(Themes.accent(this), dp(10).toFloat()), dp(10).toFloat())
+        t.setOnClickListener { onClick() }
+        return t
+    }
+
+    private fun slider(min: Int, max: Int, value: Int): SeekBar {
+        val sb = SeekBar(this)
+        val states = arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf())
+        val acc = Themes.accent(this)
+        sb.min = min
+        sb.max = max
+        sb.progress = value
+        sb.progressTintList = ColorStateList(states, intArrayOf(acc, acc))
+        sb.thumbTintList = ColorStateList(states, intArrayOf(Color.WHITE, Color.WHITE))
+        sb.progressBackgroundTintList = ColorStateList.valueOf(0x44FFFFFF)
+        return sb
+    }
+
+    // ---------------------------------------------------------------- favorites page
+
+    private fun favoritesCard(): View {
+        val card = baseCard()
+        subHeader(card, "Favorite apps")
+        val favs = Prefs.favorites(this).take(12)
+        if (favs.isEmpty()) {
+            val n = Ui.text(this, "No favorites yet.\nChoose them in NavAssist → Menu → Favorite apps.", 13f, Ui.MUTED)
+            n.setPadding(dp(8), dp(16), dp(8), dp(8))
+            card.addView(n)
+            return card
+        }
+        val tileW = tileWidth(3)
+        for (rowApps in favs.chunked(3)) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            for (pkg in rowApps) {
+                val cell = LinearLayout(this)
+                cell.orientation = LinearLayout.VERTICAL
+                cell.gravity = Gravity.CENTER_HORIZONTAL
+                cell.setPadding(0, dp(8), 0, dp(6))
+                val icon = ImageView(this)
+                try {
+                    icon.setImageDrawable(packageManager.getApplicationIcon(pkg))
+                } catch (e: Exception) {
+                    icon.setImageResource(R.drawable.ic_apps)
+                }
+                cell.addView(icon, LinearLayout.LayoutParams(dp(48), dp(48)))
+                val label = Ui.text(this, Apps.label(this, pkg) ?: pkg, 11f, 0xCCFFFFFF.toInt(), weight = 500)
+                label.gravity = Gravity.CENTER
+                label.maxLines = 1
+                label.setPadding(dp(2), dp(5), dp(2), 0)
+                cell.addView(label)
+                cell.layoutParams = LinearLayout.LayoutParams(tileW, WRAP)
+                cell.setOnClickListener {
+                    haptic(it)
+                    collapse()
+                    handler.postDelayed({ if (!Apps.launch(this, pkg)) toast("Could not open the app") }, 250)
+                }
+                row.addView(cell)
+            }
+            repeat(3 - rowApps.size) { row.addView(View(this), LinearLayout.LayoutParams(tileW, 1)) }
+            card.addView(row)
+        }
+        return card
+    }
+
+    // ---------------------------------------------------------------- brightness page
+
+    private fun openWriteSettings() {
+        safeStart(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName")))
+    }
+
+    private fun brightnessCard(): View {
+        val card = baseCard()
+        card.minimumWidth = minOf(dp(320), screen().width() - dp(40))
+        subHeader(card, "Brightness")
+        if (!Settings.System.canWrite(this)) {
+            val n = Ui.text(this, "Allow “Modify system settings” once to change brightness from here.", 13f, Ui.MUTED)
+            n.setPadding(dp(6), dp(12), dp(6), dp(12))
+            card.addView(n)
+            card.addView(pill("Allow") { collapse(); openWriteSettings() }, LinearLayout.LayoutParams(WRAP, WRAP))
+            return card
+        }
+        val cr = contentResolver
+        val cur = Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS, 128)
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(dp(4), dp(12), dp(4), dp(4))
+        val ic = ImageView(this)
+        ic.setImageResource(R.drawable.ic_brightness)
+        row.addView(ic, LinearLayout.LayoutParams(dp(22), dp(22)))
+        val sb = slider(1, 255, cur.coerceIn(1, 255))
+        val sl = LinearLayout.LayoutParams(0, WRAP, 1f)
+        sl.marginStart = dp(12)
+        row.addView(sb, sl)
+        card.addView(row)
+        sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                try {
+                    Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+                    Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, p)
+                } catch (e: Exception) {
+                    toast("Could not change brightness")
+                }
+            }
+
+            override fun onStartTrackingTouch(s: SeekBar) {}
+            override fun onStopTrackingTouch(s: SeekBar) {}
+        })
+        val auto = pill("Auto brightness") {
+            try {
+                Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC)
+                toast("Auto brightness on")
+            } catch (e: Exception) {
+                toast("Could not change brightness")
+            }
+        }
+        val al = LinearLayout.LayoutParams(WRAP, WRAP)
+        al.topMargin = dp(10)
+        card.addView(auto, al)
+        return card
+    }
+
     // ---------------------------------------------------------------- volume mixer
 
     private val mixerRows = ArrayList<Triple<SeekBar, TextView, Int>>() // seekbar, percent label, stream
-    private var touching = false
     private val mixerTick = object : Runnable {
         override fun run() {
             if (scrim == null || mixerRows.isEmpty()) return
             val am = getSystemService(AudioManager::class.java)
-            if (!touching) {
+            if (!sliderTouch) {
                 for ((sb, pct, stream) in mixerRows) {
                     val v = am.getStreamVolume(stream)
                     if (sb.progress != v) sb.progress = v
@@ -407,44 +804,28 @@ class OverlayService : Service() {
         val card = baseCard()
         card.minimumWidth = minOf(dp(330), screen().width() - dp(40))
         mixerRows.clear()
+        subHeader(card, "Volume mixer")
+        val acc = Themes.accent(this)
 
-        val head = LinearLayout(this)
-        head.orientation = LinearLayout.HORIZONTAL
-        head.gravity = Gravity.CENTER_VERTICAL
-        val back = ImageView(this)
-        back.setImageResource(R.drawable.ic_back)
-        back.setPadding(dp(9), dp(9), dp(9), dp(9))
-        back.contentDescription = "Back to menu"
-        back.setOnClickListener {
-            mixerRows.clear()
-            scrim?.let { showCard(it, menuCard()) }
-        }
-        head.addView(back, LinearLayout.LayoutParams(dp(38), dp(38)))
-        val title = Ui.text(this, "Volume mixer", 15f, Ui.TEXT, weight = 600)
-        title.setPadding(dp(6), 0, 0, 0)
-        head.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        card.addView(head)
-
-        // ringer mode: Sound / Vibrate / Silent
         val modes = LinearLayout(this)
         modes.orientation = LinearLayout.HORIZONTAL
         val modeDefs = listOf(
-            Triple("Sound", AudioManager.RINGER_MODE_NORMAL, R.drawable.ic_notifications),
-            Triple("Vibrate", AudioManager.RINGER_MODE_VIBRATE, R.drawable.ic_volume_down),
-            Triple("Silent", AudioManager.RINGER_MODE_SILENT, R.drawable.ic_volume_off)
+            "Sound" to AudioManager.RINGER_MODE_NORMAL,
+            "Vibrate" to AudioManager.RINGER_MODE_VIBRATE,
+            "Silent" to AudioManager.RINGER_MODE_SILENT
         )
         val modeViews = ArrayList<Pair<TextView, Int>>()
         fun paintModes() {
             for ((v, m) in modeViews) {
                 val on = am.ringerMode == m
                 v.background = Ui.shape(
-                    if (on) Ui.VIOLET else 0xB31F2937.toInt(), dp(12).toFloat(),
-                    if (on) Ui.VIOLET else 0xFF2B3647.toInt(), dp(1)
+                    if (on) acc else 0x1FFFFFFF, dp(12).toFloat(),
+                    if (on) acc else 0x26FFFFFF, dp(1)
                 )
                 v.setTextColor(if (on) Color.WHITE else Ui.MUTED)
             }
         }
-        for ((name, mode, _) in modeDefs) {
+        for ((name, mode) in modeDefs) {
             val v = Ui.text(this, name, 12.5f, Ui.MUTED, weight = 500)
             v.gravity = Gravity.CENTER
             v.setPadding(0, dp(9), 0, dp(9))
@@ -457,7 +838,7 @@ class OverlayService : Service() {
                 paintModes()
             }
             modeViews.add(v to mode)
-            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            val lp = LinearLayout.LayoutParams(0, WRAP, 1f)
             lp.setMargins(dp(3), dp(8), dp(3), dp(4))
             modes.addView(v, lp)
         }
@@ -471,12 +852,7 @@ class OverlayService : Service() {
             Triple("Notifications", AudioManager.STREAM_NOTIFICATION, R.drawable.ic_notifications),
             Triple("Alarm", AudioManager.STREAM_ALARM, R.drawable.ic_alarm)
         )
-        val states = arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf())
-
         for ((name, stream, icon) in streams) {
-            val minV = am.getStreamMinVolume(stream)
-            val maxV = am.getStreamMaxVolume(stream)
-
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
             row.gravity = Gravity.CENTER_VERTICAL
@@ -492,19 +868,12 @@ class OverlayService : Service() {
             col.orientation = LinearLayout.VERTICAL
             val top = LinearLayout(this)
             top.orientation = LinearLayout.HORIZONTAL
-            val label = Ui.text(this, name, 13f, Ui.TEXT, weight = 500)
             val pct = Ui.text(this, "", 12f, Ui.MUTED)
-            top.addView(label, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            top.addView(Ui.text(this, name, 13f, Ui.TEXT, weight = 500), LinearLayout.LayoutParams(0, WRAP, 1f))
             top.addView(pct)
             col.addView(top)
 
-            val sb = SeekBar(this)
-            sb.min = minV
-            sb.max = maxV
-            sb.progress = am.getStreamVolume(stream)
-            sb.progressTintList = ColorStateList(states, intArrayOf(Ui.VIOLET, Ui.VIOLET))
-            sb.thumbTintList = ColorStateList(states, intArrayOf(Ui.CYAN, Ui.CYAN))
-            sb.progressBackgroundTintList = ColorStateList.valueOf(0xFF2B3647.toInt())
+            val sb = slider(am.getStreamMinVolume(stream), am.getStreamMaxVolume(stream), am.getStreamVolume(stream))
             pct.text = pctText(am, stream, sb.progress)
             sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
@@ -517,18 +886,16 @@ class OverlayService : Service() {
                     pct.text = pctText(am, stream, am.getStreamVolume(stream))
                 }
 
-                override fun onStartTrackingTouch(s: SeekBar) { touching = true }
+                override fun onStartTrackingTouch(s: SeekBar) { sliderTouch = true }
                 override fun onStopTrackingTouch(s: SeekBar) {
-                    touching = false
-                    // snap back to what the phone really accepted
+                    sliderTouch = false
                     s.progress = am.getStreamVolume(stream)
                     pct.text = pctText(am, stream, s.progress)
                 }
             })
             mixerRows.add(Triple(sb, pct, stream))
-            col.addView(sb, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-            row.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            col.addView(sb, LinearLayout.LayoutParams(MATCH, WRAP))
+            row.addView(col, LinearLayout.LayoutParams(0, WRAP, 1f))
             card.addView(row)
         }
 
@@ -552,21 +919,30 @@ class OverlayService : Service() {
         when (a) {
             NavAction.VOLUME_UP -> volume(AudioManager.ADJUST_RAISE)
             NavAction.VOLUME_DOWN -> volume(AudioManager.ADJUST_LOWER)
-            NavAction.MIXER -> scrim?.let { showCard(it, mixerCard()) }
             NavAction.TORCH -> toggleTorch()
+            NavAction.TIMEOUT -> cycleTimeout()
+            NavAction.ROTATION -> toggleRotation()
+            NavAction.SOUND_MODE -> cycleSound()
+            NavAction.MIXER, NavAction.BRIGHTNESS, NavAction.FAVORITE ->
+                scrim?.let { showCard(it, subCard(a)) } ?: runGesture(a.name)
             else -> {
                 collapse()
-                val delay = if (a == NavAction.SCREENSHOT) 450L else 300L
-                handler.postDelayed({ perform(a) }, delay)
+                if (a == NavAction.SCREENSHOT) {
+                    // hide the orb so it is not captured in the screenshot
+                    tempHidden = true
+                    applyVisibility()
+                    handler.postDelayed({ perform(a) }, 450)
+                    handler.postDelayed({ tempHidden = false; applyVisibility() }, 1800)
+                } else {
+                    handler.postDelayed({ perform(a) }, 300)
+                }
             }
         }
     }
 
     private fun perform(a: NavAction) {
         when (a) {
-            NavAction.HOME -> safeStart(
-                Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-            )
+            NavAction.HOME -> safeStart(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
             NavAction.BACK -> global(AccessibilityService.GLOBAL_ACTION_BACK)
             NavAction.RECENTS -> withService { it.openRecents(Prefs.recentsMode(this)) }
             NavAction.NOTIFICATIONS -> withService { it.openNotifications() }
@@ -583,7 +959,6 @@ class OverlayService : Service() {
                     launchPkg(pkg, Intent(Intent.ACTION_ASSIST))
                 }
             }
-            NavAction.FAVORITE -> launchPkg(Prefs.favPkg(this), null)
             NavAction.CAMERA -> safeStart(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))
             NavAction.SELFIE -> safeStart(
                 Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
@@ -594,8 +969,20 @@ class OverlayService : Service() {
             NavAction.GALLERY -> safeStart(
                 Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_GALLERY)
             )
+            NavAction.WIFI -> safeStart(Intent(Settings.Panel.ACTION_WIFI))
             NavAction.DATA -> safeStart(Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY))
+            NavAction.BLUETOOTH -> safeStart(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+            NavAction.LOCATION -> safeStart(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            NavAction.AIRPLANE -> safeStart(Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS))
             NavAction.SETTINGS -> safeStart(Intent(Settings.ACTION_SETTINGS))
+            NavAction.STORAGE -> safeStart(Intent("android.os.storage.action.MANAGE_STORAGE"))
+            NavAction.HIDE -> hideOrb()
+            NavAction.RECORDER ->
+                if (RecordService.recording) {
+                    startService(Intent(this, RecordService::class.java).setAction(RecordService.ACTION_STOP))
+                } else {
+                    safeStart(Intent(this, RecordActivity::class.java))
+                }
             else -> {}
         }
     }
@@ -639,6 +1026,60 @@ class OverlayService : Service() {
         }
     }
 
+    private fun cycleTimeout() {
+        if (!Settings.System.canWrite(this)) {
+            collapse()
+            toast("Allow “Modify system settings” for NavAssist first")
+            openWriteSettings()
+            return
+        }
+        val steps = listOf(15000, 30000, 60000, 120000, 300000, 600000)
+        val cur = Settings.System.getInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, 60000)
+        val next = steps.firstOrNull { it > cur } ?: steps[0]
+        try {
+            Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, next)
+            toast("Screen timeout: " + if (next < 60000) "${next / 1000} seconds" else "${next / 60000} min")
+        } catch (e: Exception) {
+            toast("Could not change screen timeout")
+        }
+    }
+
+    private fun toggleRotation() {
+        if (!Settings.System.canWrite(this)) {
+            collapse()
+            toast("Allow “Modify system settings” for NavAssist first")
+            openWriteSettings()
+            return
+        }
+        val on = Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1
+        try {
+            Settings.System.putInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, if (on) 0 else 1)
+            toast(if (on) "Rotation locked" else "Auto-rotate on")
+        } catch (e: Exception) {
+            toast("Could not change rotation")
+        }
+    }
+
+    private fun cycleSound() {
+        val am = getSystemService(AudioManager::class.java)
+        val next = when (am.ringerMode) {
+            AudioManager.RINGER_MODE_NORMAL -> AudioManager.RINGER_MODE_VIBRATE
+            AudioManager.RINGER_MODE_VIBRATE -> AudioManager.RINGER_MODE_SILENT
+            else -> AudioManager.RINGER_MODE_NORMAL
+        }
+        try {
+            am.ringerMode = next
+            toast(when (next) {
+                AudioManager.RINGER_MODE_VIBRATE -> "Vibrate"
+                AudioManager.RINGER_MODE_SILENT -> "Silent"
+                else -> "Sound on"
+            })
+        } catch (e: SecurityException) {
+            am.ringerMode = AudioManager.RINGER_MODE_NORMAL
+            toast("Silent needs “Do Not Disturb access” (NavAssist → Setup)")
+        }
+    }
+
     private fun launchPkg(pkg: String?, fallback: Intent?) {
         if (pkg != null && Apps.launch(this, pkg)) return
         if (fallback != null) safeStart(fallback) else toast("Choose an app for this button in NavAssist")
@@ -667,14 +1108,23 @@ class OverlayService : Service() {
         orb = null
         Prefs.of(this).unregisterOnSharedPreferenceChangeListener(prefListener)
         running = false
+        hiddenFlag = false
+        instance = null
         super.onDestroy()
     }
 
     companion object {
         const val ACTION_STOP = "com.example.navassist.STOP"
+        const val ACTION_TOGGLE = "com.example.navassist.TOGGLE"
         private const val CHANNEL_ID = "overlay_channel"
 
         @Volatile
         var running = false
+
+        @Volatile
+        var hiddenFlag = false
+
+        @Volatile
+        var instance: OverlayService? = null
     }
 }

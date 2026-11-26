@@ -14,6 +14,8 @@ the chat. Your API key is encrypted with the Android Keystore and stored only on
 **Microphone (optional).** Used only while you tap the mic in the AI chat, for speech-to-text through Android's speech
 service. Nothing is recorded or stored by NavAssist.
 
+**Screen recording (optional).** Only when you start it. Android asks for your consent each time. Videos are saved on your phone in Movies/NavAssist and never uploaded by NavAssist.
+
 **Other.** The installed-app list is read locally to power the Search button and app pickers and never leaves your
 phone. Settings (chosen buttons, favorite app, opacity, etc.) are stored only on your device.
 

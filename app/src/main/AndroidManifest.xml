@@ -8,6 +8,14 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Makes NavAssist appear in Settings > Do Not Disturb access (needed for Silent / ringtone volume). -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- Optional special permission: brightness, screen timeout, auto-rotate shortcuts. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Optional: only granted through ADB. Lets the app switch its own accessibility service on. -->
     <uses-permission
@@ -58,6 +66,29 @@
             android:taskAffinity=""
             android:theme="@style/SearchTheme"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".RecordActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <service
+            android:name=".RecordService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection|microphone" />
+
+        <service
+            android:name=".OrbTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_orb"
+            android:label="NavAssist"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".OverlayService"

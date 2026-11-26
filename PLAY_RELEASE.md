@@ -15,7 +15,9 @@ You still need 2+ real phone screenshots (take them on your phone).
    Explain: performs Back/Recents/Lock/Power/Screenshot (and a swipe gesture for Recents on phones that ignore the
    standard action) for people with damaged or hard-to-press buttons; no screen reading, no data collection.
    Add a short demo video. Approval is up to Google review.
-6. **AI-generated content policy.** Apps with generative AI must let users report offensive output. Add an in-chat
+6. **Foreground service declarations.** Besides "special use", declare "media projection" (screen recorder) and "microphone" in Play Console, with the demo video.
+7. **Sensitive permissions.** WRITE_SETTINGS and ACCESS_NOTIFICATION_POLICY are special permissions the user grants in Settings; describe them in your listing (brightness / timeout / rotation shortcuts, silent mode).
+8. **AI-generated content policy.** Apps with generative AI must let users report offensive output. Add an in-chat
    "Report" action (e.g. a mailto link) before submitting, and describe the AI feature in the listing.
-7. **Prominent disclosure.** Already built in (dialog before opening Accessibility settings).
-8. Optional: remove `WRITE_SECURE_SETTINGS` from the manifest for the Play build.
+9. **Prominent disclosure.** Already built in (dialog before opening Accessibility settings).
+10. Optional: remove `WRITE_SECURE_SETTINGS` from the manifest for the Play build.

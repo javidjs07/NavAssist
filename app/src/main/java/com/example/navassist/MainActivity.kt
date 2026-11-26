@@ -21,11 +21,13 @@ import android.view.View
 import android.view.WindowInsets
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.GridLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
+import android.widget.TextView
 import android.widget.Toast
 
 class MainActivity : Activity() {
@@ -48,18 +50,21 @@ class MainActivity : Activity() {
     private val DIALOG = android.R.style.Theme_DeviceDefault_Dialog_Alert
 
     private val voiceLangs = listOf(
-        "Device default" to "",
-        "English (India)" to "en-IN",
-        "English (US)" to "en-US",
-        "తెలుగు (Telugu)" to "te-IN",
-        "हिन्दी (Hindi)" to "hi-IN",
-        "தமிழ் (Tamil)" to "ta-IN",
-        "ಕನ್ನಡ (Kannada)" to "kn-IN"
+        "Device default" to "", "English (India)" to "en-IN", "English (US)" to "en-US",
+        "తెలుగు (Telugu)" to "te-IN", "हिन्दी (Hindi)" to "hi-IN", "தமிழ் (Tamil)" to "ta-IN", "ಕನ್ನಡ (Kannada)" to "kn-IN"
     )
-    private val recentsModes = listOf(
-        "Auto (recommended)", "System action only", "Swipe gesture", "Launcher shortcut"
-    )
-    private val orbSizes = listOf("Small", "Medium", "Large")
+    private val recentsModes = listOf("Auto (recommended)", "System action only", "Swipe gesture", "Launcher shortcut")
+    private val layouts = listOf("3 × 3", "3 × 4", "4 × 4")
+    private val resolutions = listOf("Auto (screen size)", "1080p", "720p", "480p")
+    private val bitrates = listOf("4 Mbps", "8 Mbps", "12 Mbps")
+    private val fpsList = listOf("30 fps", "60 fps")
+    private val sounds = listOf("Mute", "Microphone")
+    private val hideOptions = listOf(5 to "5 seconds", 15 to "15 seconds", 30 to "30 seconds", 60 to "1 minute", 0 to "Until I bring it back")
+
+    private val gestureOptions: List<Pair<String, String>> by lazy {
+        listOf("MENU" to "Open menu", "HIDE" to "Hide orb", "NONE" to "Do nothing") +
+            NavAction.values().filter { it != NavAction.HIDE }.map { it.name to it.label }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -118,11 +123,13 @@ class MainActivity : Activity() {
     }
 
     private fun signature(): String = listOf(
-        hasNotif(), hasMic(), hasDnd(), Settings.canDrawOverlays(this), Access.isEnabled(this),
-        Access.isRunning(), OverlayService.running, Prefs.enabledActions(this).size,
-        Prefs.aiPkg(this), Prefs.favPkg(this), Access.canWriteSecure(this),
-        Prefs.aiProvider(this), Prefs.aiModel(this), Prefs.aiKeyEnc(this).length,
-        Prefs.voiceLang(this), Prefs.recentsMode(this), Prefs.orbSize(this)
+        hasNotif(), hasMic(), hasDnd(), Settings.System.canWrite(this), Settings.canDrawOverlays(this),
+        Access.isEnabled(this), Access.isRunning(), OverlayService.running,
+        Prefs.enabledActions(this).size, Prefs.aiPkg(this), Prefs.favorites(this).size, Access.canWriteSecure(this),
+        Prefs.aiProvider(this), Prefs.aiModel(this), Prefs.aiKeyEnc(this).length, Prefs.voiceLang(this),
+        Prefs.recentsMode(this), Prefs.theme(this), Prefs.accent(this), Prefs.orbIcon(this), Prefs.layout(this),
+        Prefs.tapAction(this), Prefs.doubleAction(this), Prefs.longAction(this), Prefs.hideSeconds(this),
+        Prefs.recRes(this), Prefs.recBitrate(this), Prefs.recFps(this), Prefs.recSound(this), RecordService.recording
     ).joinToString("|")
 
     private fun refresh(force: Boolean) {
@@ -166,8 +173,13 @@ class MainActivity : Activity() {
             openAccessibility()
         })
         setup.addView(divider())
-        setup.addView(stepRow(4, "Do Not Disturb access", "Optional: ringtone and Silent in the volume mixer", hasDnd(), "Open") {
+        setup.addView(stepRow(4, "Do Not Disturb access", "Optional: ringtone and Silent in the mixer", hasDnd(), "Open") {
             safeOpen(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+        })
+        setup.addView(divider())
+        setup.addView(stepRow(5, "Modify system settings", "Optional: brightness, timeout, rotation shortcuts",
+            Settings.System.canWrite(this), "Open") {
+            safeOpen(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName")))
         })
         col.addView(setup)
 
@@ -176,8 +188,17 @@ class MainActivity : Activity() {
         col.addView(sectionLabel("AI ASSISTANT"))
         col.addView(aiCard())
 
-        col.addView(sectionLabel("CUSTOMIZE"))
-        col.addView(customizeCard())
+        col.addView(sectionLabel("APPEARANCE"))
+        col.addView(appearanceCard())
+
+        col.addView(sectionLabel("MENU"))
+        col.addView(menuCardSettings())
+
+        col.addView(sectionLabel("ORB GESTURES"))
+        col.addView(gesturesCard())
+
+        col.addView(sectionLabel("SCREEN RECORDER"))
+        col.addView(recorderCard())
 
         col.addView(sectionLabel("ADVANCED"))
         col.addView(advancedCard())
@@ -185,7 +206,7 @@ class MainActivity : Activity() {
         col.addView(sectionLabel("MORE"))
         col.addView(moreCard())
 
-        val foot = Ui.text(this, "NavAssist 2.2  •  No ads  •  No tracking", 12f, Ui.MUTED)
+        val foot = Ui.text(this, "NavAssist 3.0  •  No ads  •  No tracking", 12f, Ui.MUTED)
         foot.gravity = Gravity.CENTER
         foot.setPadding(0, dp(18), 0, 0)
         col.addView(foot, lp(MATCH, WRAP))
@@ -233,7 +254,7 @@ class MainActivity : Activity() {
         txt.gravity = Gravity.CENTER_VERTICAL
         txt.setPadding(dp(18), dp(14), dp(8), dp(14))
         txt.addView(Ui.text(this, "Your buttons,\nright on screen.", 20f, Ui.TEXT, weight = 700))
-        val sub = Ui.text(this, "Home · Back · Recents · Power\nVolume mixer · AI voice chat", 12f, Ui.MUTED)
+        val sub = Ui.text(this, "Home · Back · Recents · Power\nVolume mixer · Recorder · AI chat", 12f, Ui.MUTED)
         sub.setPadding(0, dp(8), 0, 0)
         txt.addView(sub)
         val w = (resources.displayMetrics.widthPixels * 0.52f).toInt()
@@ -337,13 +358,13 @@ class MainActivity : Activity() {
         return c
     }
 
+    // ------------------------------------------------------------------ cards
+
     private fun aiCard(): View {
         val c = card()
         val cfg = AiConfig.load(this)
-        c.addView(linkRow(
-            "AI provider",
-            if (cfg.ready) "${cfg.provider.label} · ${cfg.model}" else "Not set up. Tap to add your API key"
-        ) { showProviderDialog() })
+        c.addView(linkRow("AI provider",
+            if (cfg.ready) "${cfg.provider.label} · ${cfg.model}" else "Not set up. Tap to add your API key") { showProviderDialog() })
         c.addView(divider())
         c.addView(linkRow("Open the AI chat", "Type or talk. Opens over any app") {
             startActivity(Intent(this, AiChatActivity::class.java))
@@ -357,16 +378,39 @@ class MainActivity : Activity() {
         return c
     }
 
-    private fun customizeCard(): View {
+    private fun appearanceCard(): View {
+        val c = card()
+        c.addView(linkRow("Menu theme", Themes.theme(this).name) { pickTheme() })
+        c.addView(divider())
+        c.addView(linkRow("Accent color", "Highlights, sliders, orb ring") { pickAccent() })
+        c.addView(divider())
+        val icon = Prefs.orbIcon(this)
+        c.addView(linkRow("Orb icon", if (icon.startsWith("emoji:")) "Emoji ${icon.removePrefix("emoji:")}" else icon.replaceFirstChar { it.uppercase() }) { pickOrbIcon() })
+        c.addView(divider())
+        c.addView(switchRow("Rounded-square orb", "Off = circle", Prefs.orbShape(this) == 1) {
+            Prefs.setOrbShape(this, if (it) 1 else 0)
+        })
+        c.addView(divider())
+        c.addView(sliderRow("Orb size", 60, 140, Prefs.orbScale(this), "%") { Prefs.setOrbScale(this, it) })
+        c.addView(divider())
+        c.addView(sliderRow("Orb opacity when idle", 20, 100, Prefs.opacity(this), "%") { Prefs.setOpacity(this, it) })
+        c.addView(divider())
+        c.addView(sliderRow("Menu transparency (higher = solid)", 50, 100, Prefs.panelOpacity(this), "%") { Prefs.setPanelOpacity(this, it) })
+        c.addView(divider())
+        c.addView(sliderRow("Animation speed", 0, 100, Prefs.animSpeed(this), "%") { Prefs.setAnimSpeed(this, it) })
+        c.addView(divider())
+        c.addView(switchRow("Icon tiles", "Rounded backgrounds behind menu icons", Prefs.iconTiles(this)) { Prefs.setIconTiles(this, it) })
+        return c
+    }
+
+    private fun menuCardSettings(): View {
         val c = card()
         val enabled = Prefs.enabledActions(this)
         c.addView(linkRow("Menu buttons", "${enabled.size} of ${NavAction.values().size} shown") { pickButtons() })
         c.addView(divider())
-        c.addView(linkRow("Favorite app", Apps.label(this, Prefs.favPkg(this)) ?: "Not set") {
-            pickApp("Favorite app") { Prefs.setFavPkg(this, it) }
-        })
+        c.addView(linkRow("Menu layout", layouts[Prefs.layout(this).coerceIn(0, 2)] + "  ·  extra buttons go on more pages") { pickLayout() })
         c.addView(divider())
-        c.addView(opacityRow())
+        c.addView(linkRow("Favorite apps", "${Prefs.favorites(this).size} chosen  ·  shown by the Favorites button") { pickFavorites() })
         c.addView(divider())
         c.addView(switchRow("Start on boot", "Brings the orb back after a restart", Prefs.startOnBoot(this)) {
             Prefs.setStartOnBoot(this, it)
@@ -374,19 +418,62 @@ class MainActivity : Activity() {
         return c
     }
 
+    private fun gesturesCard(): View {
+        val c = card()
+        c.addView(linkRow("Single tap", gestureLabel(Prefs.tapAction(this))) {
+            pickGesture("Single tap", Prefs.tapAction(this)) { Prefs.setTapAction(this, it) }
+        })
+        c.addView(divider())
+        c.addView(linkRow("Double tap", gestureLabel(Prefs.doubleAction(this))) {
+            pickGesture("Double tap", Prefs.doubleAction(this)) { Prefs.setDoubleAction(this, it) }
+        })
+        c.addView(divider())
+        c.addView(linkRow("Long press", gestureLabel(Prefs.longAction(this))) {
+            pickGesture("Long press", Prefs.longAction(this)) { Prefs.setLongAction(this, it) }
+        })
+        c.addView(divider())
+        c.addView(linkRow("“Hide orb” lasts", hideOptions.firstOrNull { it.first == Prefs.hideSeconds(this) }?.second ?: "15 seconds") { pickHideSeconds() })
+        return c
+    }
+
+    private fun recorderCard(): View {
+        val c = card()
+        c.addView(linkRow(if (RecordService.recording) "Stop recording" else "Record the screen now",
+            "Saved in Movies/NavAssist") { startActivity(Intent(this, RecordActivity::class.java)) })
+        c.addView(divider())
+        c.addView(linkRow("Resolution", resolutions[Prefs.recRes(this).coerceIn(0, 3)]) {
+            pickIndex("Resolution", resolutions, Prefs.recRes(this)) { Prefs.setRecRes(this, it) }
+        })
+        c.addView(divider())
+        c.addView(linkRow("Bitrate", bitrates[Prefs.recBitrate(this).coerceIn(0, 2)]) {
+            pickIndex("Bitrate", bitrates, Prefs.recBitrate(this)) { Prefs.setRecBitrate(this, it) }
+        })
+        c.addView(divider())
+        c.addView(linkRow("Frame rate", fpsList[Prefs.recFps(this).coerceIn(0, 1)]) {
+            pickIndex("Frame rate", fpsList, Prefs.recFps(this)) { Prefs.setRecFps(this, it) }
+        })
+        c.addView(divider())
+        c.addView(linkRow("Sound", sounds[Prefs.recSound(this).coerceIn(0, 1)]) {
+            pickIndex("Sound", sounds, Prefs.recSound(this)) { Prefs.setRecSound(this, it) }
+        })
+        c.addView(divider())
+        c.addView(switchRow("Hide orb while recording", "Keeps it out of your video", Prefs.recHideOrb(this)) { Prefs.setRecHideOrb(this, it) })
+        return c
+    }
+
     private fun advancedCard(): View {
         val c = card()
-        c.addView(linkRow("Recents method", recentsModes[Prefs.recentsMode(this).coerceIn(0, 3)]) { pickRecentsMode() })
+        c.addView(linkRow("Recents method", recentsModes[Prefs.recentsMode(this).coerceIn(0, 3)]) {
+            pickIndex("Recents method", recentsModes, Prefs.recentsMode(this)) { Prefs.setRecentsMode(this, it) }
+        })
         c.addView(divider())
         c.addView(linkRow("Test Recents now", "Uses the method above and tells you what worked") { testRecents() })
         c.addView(divider())
-        c.addView(linkRow("Orb size", orbSizes[Prefs.orbSize(this).coerceIn(0, 2)]) { pickOrbSize() })
+        c.addView(switchRow("Peek at screen edge", "Idle orb slides half off-screen", Prefs.peek(this)) { Prefs.setPeek(this, it) })
+        c.addView(divider())
+        c.addView(switchRow("Snap to screen edge", "The orb glides to the nearest side", Prefs.snapToEdge(this)) { Prefs.setSnapToEdge(this, it) })
         c.addView(divider())
         c.addView(switchRow("Haptic feedback", "Short vibration on taps", Prefs.haptics(this)) { Prefs.setHaptics(this, it) })
-        c.addView(divider())
-        c.addView(switchRow("Snap to screen edge", "The orb glides to the nearest side", Prefs.snapToEdge(this)) {
-            Prefs.setSnapToEdge(this, it)
-        })
         c.addView(divider())
         val nav = when (Settings.Secure.getInt(contentResolver, "navigation_mode", -1)) {
             0 -> "3-button"; 1 -> "2-button"; 2 -> "gesture"; else -> "unknown"
@@ -399,6 +486,10 @@ class MainActivity : Activity() {
 
     private fun moreCard(): View {
         val c = card()
+        c.addView(linkRow("Taking a screenshot yourself?", "Add the NavAssist tile to Quick Settings: tap it to hide or show the orb") {
+            toast("Swipe down twice, tap the pencil/edit icon and drag the “NavAssist” tile in.")
+        })
+        c.addView(divider())
         c.addView(linkRow("Accessibility settings", "Turn NavAssist on or off") { openAccessibility() })
         c.addView(divider())
         c.addView(linkRow("Keep NavAssist running", "Exclude it from battery optimization") {
@@ -421,6 +512,8 @@ class MainActivity : Activity() {
         })
         return c
     }
+
+    // ------------------------------------------------------------------ rows
 
     private fun linkRow(title: String, sub: String, onClick: () -> Unit): LinearLayout {
         val row = LinearLayout(this)
@@ -458,29 +551,28 @@ class MainActivity : Activity() {
         return row
     }
 
-    private fun opacityRow(): View {
+    private fun sliderRow(title: String, min: Int, max: Int, value: Int, unit: String, onChange: (Int) -> Unit): View {
         val col = LinearLayout(this)
         col.orientation = LinearLayout.VERTICAL
         col.setPadding(0, dp(13), 0, dp(10))
         val top = LinearLayout(this)
         top.orientation = LinearLayout.HORIZONTAL
-        top.addView(Ui.text(this, "Orb opacity when idle", 15f, Ui.TEXT, weight = 600),
-            LinearLayout.LayoutParams(0, WRAP, 1f))
-        val value = Ui.text(this, "${Prefs.opacity(this)}%", 13f, Ui.MUTED)
-        top.addView(value)
+        top.addView(Ui.text(this, title, 15f, Ui.TEXT, weight = 600), LinearLayout.LayoutParams(0, WRAP, 1f))
+        val valueView = Ui.text(this, "$value$unit", 13f, Ui.MUTED)
+        top.addView(valueView)
         col.addView(top)
         val sb = SeekBar(this)
-        sb.min = 20
-        sb.max = 100
-        sb.progress = Prefs.opacity(this)
+        sb.min = min
+        sb.max = max
+        sb.progress = value.coerceIn(min, max)
         val states = arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf())
         sb.progressTintList = ColorStateList(states, intArrayOf(Ui.VIOLET, Ui.VIOLET))
         sb.thumbTintList = ColorStateList(states, intArrayOf(Ui.CYAN, Ui.CYAN))
         sb.progressBackgroundTintList = ColorStateList.valueOf(0xFF2B3647.toInt())
         sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
-                value.text = "$p%"
-                if (fromUser) Prefs.setOpacity(this@MainActivity, p)
+                valueView.text = "$p$unit"
+                if (fromUser) onChange(p)
             }
 
             override fun onStartTrackingTouch(s: SeekBar) {}
@@ -490,7 +582,7 @@ class MainActivity : Activity() {
         return col
     }
 
-    // ------------------------------------------------------------------ actions
+    // ------------------------------------------------------------------ actions & dialogs
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
 
@@ -556,11 +648,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun pickRecentsMode() {
+    private fun pickIndex(title: String, items: List<String>, current: Int, onPick: (Int) -> Unit) {
         AlertDialog.Builder(this, DIALOG)
-            .setTitle("Recents method")
-            .setSingleChoiceItems(recentsModes.toTypedArray(), Prefs.recentsMode(this)) { d, i ->
-                Prefs.setRecentsMode(this, i)
+            .setTitle(title)
+            .setSingleChoiceItems(items.toTypedArray(), current) { d, i ->
+                onPick(i)
                 d.dismiss()
                 refresh(true)
             }
@@ -568,16 +660,79 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun pickOrbSize() {
-        AlertDialog.Builder(this, DIALOG)
-            .setTitle("Orb size")
-            .setSingleChoiceItems(orbSizes.toTypedArray(), Prefs.orbSize(this)) { d, i ->
-                Prefs.setOrbSize(this, i)
-                d.dismiss()
+    private fun pickTheme() = pickIndex("Menu theme", Themes.all.map { it.name }, Prefs.theme(this)) { Prefs.setTheme(this, it) }
+    private fun pickLayout() = pickIndex("Menu layout", layouts, Prefs.layout(this)) { Prefs.setLayout(this, it) }
+
+    private fun gestureLabel(code: String) = gestureOptions.firstOrNull { it.first == code }?.second ?: code
+
+    private fun pickGesture(title: String, cur: String, onPick: (String) -> Unit) {
+        val idx = gestureOptions.indexOfFirst { it.first == cur }
+        pickIndex(title, gestureOptions.map { it.second }, idx) { onPick(gestureOptions[it].first) }
+    }
+
+    private fun pickHideSeconds() {
+        val idx = hideOptions.indexOfFirst { it.first == Prefs.hideSeconds(this) }
+        pickIndex("“Hide orb” lasts", hideOptions.map { it.second }, idx) { Prefs.setHideSeconds(this, hideOptions[it].first) }
+    }
+
+    private fun pickAccent() {
+        val grid = GridLayout(this)
+        grid.columnCount = 4
+        grid.setPadding(dp(14), dp(10), dp(14), dp(6))
+        val dialog = AlertDialog.Builder(this, DIALOG).setTitle("Accent color").setView(grid)
+            .setNegativeButton("Cancel", null).create()
+        val cur = Prefs.accent(this)
+        for (i in Themes.accents.indices) {
+            val dot = Ui.text(this, if (i == cur) "✓" else "", 18f, if (Themes.accents[i] == Themes.accents.last()) Color.BLACK else Color.WHITE, weight = 700)
+            dot.gravity = Gravity.CENTER
+            dot.background = Ui.oval(Themes.accents[i])
+            val p = GridLayout.LayoutParams()
+            p.width = dp(46)
+            p.height = dp(46)
+            p.setMargins(dp(8), dp(8), dp(8), dp(8))
+            dot.setOnClickListener {
+                Prefs.setAccent(this, i)
+                dialog.dismiss()
                 refresh(true)
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            grid.addView(dot, p)
+        }
+        dialog.show()
+    }
+
+    private fun pickOrbIcon() {
+        val grid = GridLayout(this)
+        grid.columnCount = 4
+        grid.setPadding(dp(14), dp(10), dp(14), dp(6))
+        val dialog = AlertDialog.Builder(this, DIALOG).setTitle("Orb icon").setView(grid)
+            .setNegativeButton("Cancel", null).create()
+        fun cell(view: View, key: String) {
+            view.background = Ui.shape(0x22FFFFFF, dp(14).toFloat(), if (Prefs.orbIcon(this) == key) Ui.VIOLET else 0x33FFFFFF, dp(if (Prefs.orbIcon(this) == key) 2 else 1))
+            val p = GridLayout.LayoutParams()
+            p.width = dp(54)
+            p.height = dp(54)
+            p.setMargins(dp(6), dp(6), dp(6), dp(6))
+            view.setOnClickListener {
+                Prefs.setOrbIcon(this, key)
+                dialog.dismiss()
+                refresh(true)
+            }
+            grid.addView(view, p)
+        }
+        for ((key, res) in OrbIcons.symbols) {
+            val iv = ImageView(this)
+            iv.setImageResource(res)
+            iv.setPadding(dp(13), dp(13), dp(13), dp(13))
+            cell(iv, key)
+        }
+        for (e in OrbIcons.emojis) {
+            val t = TextView(this)
+            t.text = e
+            t.textSize = 24f
+            t.gravity = Gravity.CENTER
+            cell(t, "emoji:$e")
+        }
+        dialog.show()
     }
 
     private fun voiceLangLabel(): String {
@@ -633,12 +788,7 @@ class MainActivity : Activity() {
             .setTitle(p.label)
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
-                AiConfig.save(
-                    this, p,
-                    model.text.toString().ifBlank { p.defaultModel },
-                    base?.text?.toString() ?: "",
-                    key.text.toString()
-                )
+                AiConfig.save(this, p, model.text.toString().ifBlank { p.defaultModel }, base?.text?.toString() ?: "", key.text.toString())
                 toast("Saved. Tap the AI button in the floating menu to chat.")
                 refresh(true)
             }
@@ -658,6 +808,23 @@ class MainActivity : Activity() {
             .setMultiChoiceItems(all.map { it.label }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
             .setPositiveButton("Save") { _, _ ->
                 Prefs.setEnabledActions(this, all.filterIndexed { i, _ -> checked[i] })
+                refresh(true)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun pickFavorites() {
+        val apps = Apps.launchables(this)
+        val cur = Prefs.favorites(this).toSet()
+        val checked = BooleanArray(apps.size) { apps[it].pkg in cur }
+        AlertDialog.Builder(this, DIALOG)
+            .setTitle("Favorite apps (up to 12)")
+            .setMultiChoiceItems(apps.map { it.label }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
+            .setPositiveButton("Save") { _, _ ->
+                val chosen = apps.filterIndexed { i, _ -> checked[i] }.map { it.pkg }
+                if (chosen.size > 12) toast("Only the first 12 are shown")
+                Prefs.setFavorites(this, chosen.take(12))
                 refresh(true)
             }
             .setNegativeButton("Cancel", null)
