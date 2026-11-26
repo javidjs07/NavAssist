@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Optional: only granted through ADB. Lets the app switch its own accessibility service on. -->
     <uses-permission
         android:name="android.permission.WRITE_SECURE_SETTINGS"
@@ -16,6 +18,12 @@
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
     </queries>
 
@@ -42,6 +50,14 @@
             android:taskAffinity=""
             android:theme="@style/SearchTheme"
             android:windowSoftInputMode="stateVisible|adjustResize" />
+
+        <activity
+            android:name=".AiChatActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/SearchTheme"
+            android:windowSoftInputMode="adjustResize" />
 
         <service
             android:name=".OverlayService"

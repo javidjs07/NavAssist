@@ -10,6 +10,7 @@ Push to GitHub. The **Actions** tab builds `app-debug.apk` (artifact: NavAssist-
 adb install -r app-debug.apk
 adb shell appops set com.example.navassist SYSTEM_ALERT_WINDOW allow
 adb shell pm grant com.example.navassist android.permission.POST_NOTIFICATIONS
+adb shell pm grant com.example.navassist android.permission.RECORD_AUDIO
 adb shell pm grant com.example.navassist android.permission.WRITE_SECURE_SETTINGS
 adb shell settings put secure enabled_accessibility_services com.example.navassist/com.example.navassist.NavAccessibilityService
 adb shell settings put secure accessibility_enabled 1
@@ -36,3 +37,14 @@ See PLAY_RELEASE.md and PRIVACY_POLICY.md.
 Dark palette: canvas #0B0F19, surfaces #111827, borders #1F2937, accent #6366F1 (indigo) and #38BDF8 (cyan),
 text #F9FAFB / #9CA3AF. Font: Inter (SIL OFL 1.1, see FONT_LICENSE_INTER.txt), bundled in res/font.
 NOTE: res/font/inter_var.ttf is a binary file; push with git (not copy/paste in the GitHub web editor).
+
+## Recents not working on your phone?
+Open NavAssist > Advanced > **Recents method** and try: Auto, System action only, Swipe gesture, Launcher shortcut.
+Tap **Test Recents now**; it tells you which method actually worked. Auto tries the system action first and, if
+the phone ignores it, performs the "swipe up and hold" gesture for you.
+
+## AI assistant
+NavAssist > AI assistant > AI provider: pick OpenAI, Anthropic, Google Gemini or a custom OpenAI-compatible service
+and paste an API key (a ChatGPT/Claude app subscription is NOT an API key; create one on the provider's developer
+site). Then the AI button in the floating menu opens a type-or-talk chat sheet over whatever app you are in.
+Model names change over time; edit the model field if a provider retires the default.

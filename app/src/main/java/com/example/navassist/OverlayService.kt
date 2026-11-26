@@ -57,6 +57,12 @@ class OverlayService : Service() {
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == Prefs.K_OPACITY && scrim == null) {
             orb?.alpha = idleAlpha()
+        } else if (key == Prefs.K_ORB_SIZE && scrim == null && orb != null) {
+            handler.post {
+                orb?.let { runCatching { wm.removeView(it) } }
+                orb = null
+                addOrb()
+            }
         }
     }
 
@@ -131,7 +137,7 @@ class OverlayService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun addOrb() {
-        val size = dp(48)
+        val size = dp(when (Prefs.orbSize(this)) { 0 -> 40; 2 -> 58; else -> 48 })
         val b = screen()
         val lp = WindowManager.LayoutParams(
             size, size,
@@ -148,7 +154,8 @@ class OverlayService : Service() {
         val iv = ImageView(this)
         iv.setImageResource(R.drawable.ic_orb)
         iv.scaleType = ImageView.ScaleType.FIT_CENTER
-        iv.setPadding(dp(12), dp(12), dp(12), dp(12))
+        val pad = size / 4
+        iv.setPadding(pad, pad, pad, pad)
         iv.background = Ui.oval(0x990B0F19.toInt(), 0x996366F1.toInt(), dp(1))
         iv.contentDescription = "NavAssist menu"
         iv.alpha = idleAlpha()
@@ -190,7 +197,7 @@ class OverlayService : Service() {
                         if (dragging) {
                             snap(v, lp)
                         } else if (e.actionMasked == MotionEvent.ACTION_UP) {
-                            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            if (Prefs.haptics(this@OverlayService)) v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                             expand()
                         }
                         scheduleFade()
@@ -208,6 +215,10 @@ class OverlayService : Service() {
 
     private fun snap(v: View, lp: WindowManager.LayoutParams) {
         val b = screen()
+        if (!Prefs.snapToEdge(this)) {
+            Prefs.setOrb(this, lp.x, lp.y)
+            return
+        }
         val target = if (lp.x + lp.width / 2 < b.width() / 2) dp(4) else b.width() - lp.width - dp(4)
         val anim = ValueAnimator.ofInt(lp.x, target)
         anim.duration = 220
@@ -261,6 +272,8 @@ class OverlayService : Service() {
     }
 
     private fun collapse() {
+        mixerRows.clear()
+        handler.removeCallbacks(mixerTick)
         scrim?.let { runCatching { wm.removeView(it) } }
         scrim = null
         orb?.let {
@@ -354,16 +367,46 @@ class OverlayService : Service() {
         t.addView(label)
 
         t.contentDescription = a.label
-        t.setOnClickListener { onAction(a) }
+        t.setOnClickListener {
+            if (Prefs.haptics(this)) it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            onAction(a)
+        }
         return t
     }
 
     // ---------------------------------------------------------------- volume mixer
 
+    private val mixerRows = ArrayList<Triple<SeekBar, TextView, Int>>() // seekbar, percent label, stream
+    private var touching = false
+    private val mixerTick = object : Runnable {
+        override fun run() {
+            if (scrim == null || mixerRows.isEmpty()) return
+            val am = getSystemService(AudioManager::class.java)
+            if (!touching) {
+                for ((sb, pct, stream) in mixerRows) {
+                    val v = am.getStreamVolume(stream)
+                    if (sb.progress != v) sb.progress = v
+                    pct.text = pctText(am, stream, v)
+                }
+            }
+            handler.postDelayed(this, 500)
+        }
+    }
+
+    private fun pctText(am: AudioManager, stream: Int, v: Int): String {
+        val mn = am.getStreamMinVolume(stream)
+        val range = (am.getStreamMaxVolume(stream) - mn).coerceAtLeast(1)
+        return "${((v - mn) * 100 / range).coerceIn(0, 100)}%"
+    }
+
+    private fun hasDnd(): Boolean =
+        getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted
+
     private fun mixerCard(): View {
         val am = getSystemService(AudioManager::class.java)
         val card = baseCard()
-        card.minimumWidth = minOf(dp(320), screen().width() - dp(40))
+        card.minimumWidth = minOf(dp(330), screen().width() - dp(40))
+        mixerRows.clear()
 
         val head = LinearLayout(this)
         head.orientation = LinearLayout.HORIZONTAL
@@ -372,17 +415,60 @@ class OverlayService : Service() {
         back.setImageResource(R.drawable.ic_back)
         back.setPadding(dp(9), dp(9), dp(9), dp(9))
         back.contentDescription = "Back to menu"
-        back.setOnClickListener { scrim?.let { showCard(it, menuCard()) } }
+        back.setOnClickListener {
+            mixerRows.clear()
+            scrim?.let { showCard(it, menuCard()) }
+        }
         head.addView(back, LinearLayout.LayoutParams(dp(38), dp(38)))
-        val title = Ui.text(this, "Volume mixer", 15f, Ui.TEXT, bold = true)
+        val title = Ui.text(this, "Volume mixer", 15f, Ui.TEXT, weight = 600)
         title.setPadding(dp(6), 0, 0, 0)
         head.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         card.addView(head)
+
+        // ringer mode: Sound / Vibrate / Silent
+        val modes = LinearLayout(this)
+        modes.orientation = LinearLayout.HORIZONTAL
+        val modeDefs = listOf(
+            Triple("Sound", AudioManager.RINGER_MODE_NORMAL, R.drawable.ic_notifications),
+            Triple("Vibrate", AudioManager.RINGER_MODE_VIBRATE, R.drawable.ic_volume_down),
+            Triple("Silent", AudioManager.RINGER_MODE_SILENT, R.drawable.ic_volume_off)
+        )
+        val modeViews = ArrayList<Pair<TextView, Int>>()
+        fun paintModes() {
+            for ((v, m) in modeViews) {
+                val on = am.ringerMode == m
+                v.background = Ui.shape(
+                    if (on) Ui.VIOLET else 0xB31F2937.toInt(), dp(12).toFloat(),
+                    if (on) Ui.VIOLET else 0xFF2B3647.toInt(), dp(1)
+                )
+                v.setTextColor(if (on) Color.WHITE else Ui.MUTED)
+            }
+        }
+        for ((name, mode, _) in modeDefs) {
+            val v = Ui.text(this, name, 12.5f, Ui.MUTED, weight = 500)
+            v.gravity = Gravity.CENTER
+            v.setPadding(0, dp(9), 0, dp(9))
+            v.setOnClickListener {
+                try {
+                    am.ringerMode = mode
+                } catch (e: SecurityException) {
+                    toast("Silent needs “Do Not Disturb access” (NavAssist → Setup)")
+                }
+                paintModes()
+            }
+            modeViews.add(v to mode)
+            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            lp.setMargins(dp(3), dp(8), dp(3), dp(4))
+            modes.addView(v, lp)
+        }
+        paintModes()
+        card.addView(modes)
 
         val streams = listOf(
             Triple("Media  (YouTube, music)", AudioManager.STREAM_MUSIC, R.drawable.ic_volume_up),
             Triple("Call / meeting", AudioManager.STREAM_VOICE_CALL, R.drawable.ic_call),
             Triple("Ringtone", AudioManager.STREAM_RING, R.drawable.ic_notifications),
+            Triple("Notifications", AudioManager.STREAM_NOTIFICATION, R.drawable.ic_notifications),
             Triple("Alarm", AudioManager.STREAM_ALARM, R.drawable.ic_alarm)
         )
         val states = arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf())
@@ -390,12 +476,11 @@ class OverlayService : Service() {
         for ((name, stream, icon) in streams) {
             val minV = am.getStreamMinVolume(stream)
             val maxV = am.getStreamMaxVolume(stream)
-            val range = (maxV - minV).coerceAtLeast(1)
 
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
             row.gravity = Gravity.CENTER_VERTICAL
-            row.setPadding(dp(4), dp(8), dp(4), dp(4))
+            row.setPadding(dp(4), dp(8), dp(4), dp(2))
             val ic = ImageView(this)
             ic.setImageResource(icon)
             ic.alpha = 0.9f
@@ -407,7 +492,7 @@ class OverlayService : Service() {
             col.orientation = LinearLayout.VERTICAL
             val top = LinearLayout(this)
             top.orientation = LinearLayout.HORIZONTAL
-            val label = Ui.text(this, name, 13f, Ui.TEXT)
+            val label = Ui.text(this, name, 13f, Ui.TEXT, weight = 500)
             val pct = Ui.text(this, "", 12f, Ui.MUTED)
             top.addView(label, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             top.addView(pct)
@@ -420,22 +505,27 @@ class OverlayService : Service() {
             sb.progressTintList = ColorStateList(states, intArrayOf(Ui.VIOLET, Ui.VIOLET))
             sb.thumbTintList = ColorStateList(states, intArrayOf(Ui.CYAN, Ui.CYAN))
             sb.progressBackgroundTintList = ColorStateList.valueOf(0xFF2B3647.toInt())
-            pct.text = "${(sb.progress - minV) * 100 / range}%"
+            pct.text = pctText(am, stream, sb.progress)
             sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
-                    pct.text = "${(p - minV) * 100 / range}%"
-                    if (fromUser) {
-                        try {
-                            am.setStreamVolume(stream, p, 0)
-                        } catch (e: SecurityException) {
-                            toast("Turn off Do Not Disturb to change this volume")
-                        }
+                    if (!fromUser) return
+                    try {
+                        am.setStreamVolume(stream, p, 0)
+                    } catch (e: SecurityException) {
+                        toast("Allow “Do Not Disturb access” in NavAssist → Setup to change this")
                     }
+                    pct.text = pctText(am, stream, am.getStreamVolume(stream))
                 }
 
-                override fun onStartTrackingTouch(s: SeekBar) {}
-                override fun onStopTrackingTouch(s: SeekBar) {}
+                override fun onStartTrackingTouch(s: SeekBar) { touching = true }
+                override fun onStopTrackingTouch(s: SeekBar) {
+                    touching = false
+                    // snap back to what the phone really accepted
+                    s.progress = am.getStreamVolume(stream)
+                    pct.text = pctText(am, stream, s.progress)
+                }
             })
+            mixerRows.add(Triple(sb, pct, stream))
             col.addView(sb, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             row.addView(col, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -445,11 +535,14 @@ class OverlayService : Service() {
         val note = Ui.text(
             this,
             "Meetings use “Call” volume; YouTube and music use “Media”. " +
-                "Android does not let third-party apps change volume per individual app.",
+                "Android does not let third-party apps change volume per individual app." +
+                if (hasDnd()) "" else "\nRingtone and Silent need Do Not Disturb access (NavAssist → Setup).",
             11f, Ui.MUTED
         )
         note.setPadding(dp(4), dp(10), dp(4), 0)
         card.addView(note)
+        handler.removeCallbacks(mixerTick)
+        handler.postDelayed(mixerTick, 500)
         return card
     }
 
@@ -463,7 +556,7 @@ class OverlayService : Service() {
             NavAction.TORCH -> toggleTorch()
             else -> {
                 collapse()
-                val delay = if (a == NavAction.SCREENSHOT) 450L else 200L
+                val delay = if (a == NavAction.SCREENSHOT) 450L else 300L
                 handler.postDelayed({ perform(a) }, delay)
             }
         }
@@ -475,14 +568,21 @@ class OverlayService : Service() {
                 Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
             )
             NavAction.BACK -> global(AccessibilityService.GLOBAL_ACTION_BACK)
-            NavAction.RECENTS -> global(AccessibilityService.GLOBAL_ACTION_RECENTS)
-            NavAction.NOTIFICATIONS -> global(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
-            NavAction.QUICK_SETTINGS -> global(AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)
+            NavAction.RECENTS -> withService { it.openRecents(Prefs.recentsMode(this)) }
+            NavAction.NOTIFICATIONS -> withService { it.openNotifications() }
+            NavAction.QUICK_SETTINGS -> withService { it.openQuickSettings() }
             NavAction.LOCK -> global(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
             NavAction.POWER -> global(AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
             NavAction.SCREENSHOT -> global(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
             NavAction.SEARCH -> safeStart(Intent(this, SearchActivity::class.java))
-            NavAction.AI -> launchPkg(Prefs.aiPkg(this), Intent(Intent.ACTION_ASSIST))
+            NavAction.AI -> {
+                val pkg = Prefs.aiPkg(this)
+                if (AiConfig.load(this).ready || pkg == null) {
+                    safeStart(Intent(this, AiChatActivity::class.java))
+                } else {
+                    launchPkg(pkg, Intent(Intent.ACTION_ASSIST))
+                }
+            }
             NavAction.FAVORITE -> launchPkg(Prefs.favPkg(this), null)
             NavAction.CAMERA -> safeStart(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))
             NavAction.SELFIE -> safeStart(
@@ -500,12 +600,14 @@ class OverlayService : Service() {
         }
     }
 
-    private fun global(action: Int) {
+    private fun global(action: Int) = withService { it.run(action) }
+
+    private fun withService(block: (NavAccessibilityService) -> Unit) {
         val svc = NavAccessibilityService.instance
         if (svc == null) {
             toast("Turn NavAssist on in Accessibility settings first")
         } else {
-            svc.performGlobalAction(action)
+            block(svc)
         }
     }
 

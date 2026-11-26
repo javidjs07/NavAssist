@@ -5,32 +5,9 @@
             <solid android:color="#FF0B0F19" />
         </shape>
     </item>
-    <item
-        android:width="440dp"
-        android:height="440dp"
-        android:gravity="top|end"
-        android:top="-190dp"
-        android:right="-190dp">
-        <shape android:shape="oval">
-            <gradient
-                android:type="radial"
-                android:gradientRadius="220dp"
-                android:startColor="#406366F1"
-                android:endColor="#006366F1" />
-        </shape>
-    </item>
-    <item
-        android:width="400dp"
-        android:height="400dp"
-        android:gravity="bottom|start"
-        android:bottom="-190dp"
-        android:left="-190dp">
-        <shape android:shape="oval">
-            <gradient
-                android:type="radial"
-                android:gradientRadius="200dp"
-                android:startColor="#2638BDF8"
-                android:endColor="#0038BDF8" />
-        </shape>
+    <item>
+        <bitmap
+            android:gravity="fill"
+            android:src="@drawable/bg_aurora" />
     </item>
 </layer-list>
