@@ -16,6 +16,8 @@ service. Nothing is recorded or stored by NavAssist.
 
 **Screen recording (optional).** Only when you start it. Android asks for your consent each time. Videos are saved on your phone in Movies/NavAssist and never uploaded by NavAssist.
 
+**Photos and videos (optional).** Only if you press Scan on the Cleaning page, Android asks for access so NavAssist can list screenshots and large videos on the screen. File names and sizes are read on your phone and never uploaded. Deleting files always asks for your confirmation.
+
 **Other.** The installed-app list is read locally to power the Search button and app pickers and never leaves your
 phone. Settings (chosen buttons, favorite app, opacity, etc.) are stored only on your device.
 

@@ -43,5 +43,14 @@ object OrbIcons {
     )
     val emojis = listOf("😎", "🚀", "🔥", "🌸", "🐼", "🤖", "⭐", "💎")
 
-    fun res(key: String): Int = symbols.firstOrNull { it.first == key }?.second ?: R.drawable.ic_orb
+    /** Pre-rendered 3D pictures (shown as-is, no background disc). */
+    val pictures = listOf(
+        "orb3d_ring" to R.drawable.orb3d_ring, "orb3d_cyan" to R.drawable.orb3d_cyan,
+        "orb3d_indigo" to R.drawable.orb3d_indigo, "orb3d_rose" to R.drawable.orb3d_rose,
+        "orb3d_gold" to R.drawable.orb3d_gold
+    )
+
+    fun isPicture(key: String) = pictures.any { it.first == key }
+    fun res(key: String): Int =
+        (pictures + symbols).firstOrNull { it.first == key }?.second ?: R.drawable.orb3d_ring
 }

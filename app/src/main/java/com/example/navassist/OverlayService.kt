@@ -117,8 +117,10 @@ class OverlayService : Service() {
             return START_NOT_STICKY
         }
         if (orb == null) addOrb()
-        if (intent?.action == ACTION_TOGGLE) {
-            if (hidden) showOrb() else hideOrb()
+        when (intent?.action) {
+            ACTION_TOGGLE -> if (hidden) showOrb() else hideOrb()
+            ACTION_HIDE -> hideOrb()
+            ACTION_SHOW -> showOrb()
         }
         return START_STICKY
     }
@@ -191,26 +193,7 @@ class OverlayService : Service() {
     }
 
     private fun buildOrbView(size: Int): FrameLayout {
-        val box = FrameLayout(this)
-        val fill = Themes.withAlpha(0xFF0B0F19.toInt(), 62)
-        val ring = Themes.withAlpha(Themes.accent(this), 65)
-        box.background = if (Prefs.orbShape(this) == 0) Ui.oval(fill, ring, dp(1))
-        else Ui.shape(fill, size * 0.28f, ring, dp(1))
-        val key = Prefs.orbIcon(this)
-        if (key.startsWith("emoji:")) {
-            val t = TextView(this)
-            t.text = key.removePrefix("emoji:")
-            t.gravity = Gravity.CENTER
-            t.setTextSize(TypedValue.COMPLEX_UNIT_PX, size * 0.5f)
-            box.addView(t, FrameLayout.LayoutParams(size, size))
-        } else {
-            val iv = ImageView(this)
-            iv.setImageResource(OrbIcons.res(key))
-            iv.scaleType = ImageView.ScaleType.FIT_CENTER
-            val pad = (size * 0.25f).toInt()
-            iv.setPadding(pad, pad, pad, pad)
-            box.addView(iv, FrameLayout.LayoutParams(size, size))
-        }
+        val box = Ui.orbView(this, size)
         box.contentDescription = "NavAssist menu"
         box.alpha = idleAlpha()
         return box
@@ -506,15 +489,7 @@ class OverlayService : Service() {
     private fun baseCard(swipe: ((Int) -> Unit)? = null): LinearLayout {
         val card = if (swipe != null) SwipeCard(this, swipe) else LinearLayout(this)
         card.orientation = LinearLayout.VERTICAL
-        val th = Themes.theme(this)
-        val a = Prefs.panelOpacity(this)
-        val bg = GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(Themes.withAlpha(th.top, a), Themes.withAlpha(th.bottom, a))
-        )
-        bg.cornerRadius = dp(24).toFloat()
-        bg.setStroke(dp(1), th.stroke)
-        card.background = bg
+        card.background = Ui.menuPanelBackground(this)
         card.setPadding(dp(14), dp(10), dp(14), dp(14))
         card.isClickable = true
         return card
@@ -613,11 +588,7 @@ class OverlayService : Service() {
         t.layoutParams = LinearLayout.LayoutParams(w, WRAP)
 
         val accent = a == NavAction.AI
-        val chipBg = when {
-            accent -> Ui.shape(Themes.accent(this), dp(16).toFloat())
-            Prefs.iconTiles(this) -> Ui.shape(0x1FFFFFFF, dp(16).toFloat(), 0x26FFFFFF, dp(1))
-            else -> Ui.shape(0x00000000, dp(16).toFloat())
-        }
+        val chipBg = Ui.menuChipBg(this, accent)
         val chip = ImageView(this)
         chip.setImageResource(a.icon)
         chip.setPadding(dp(14), dp(14), dp(14), dp(14))
@@ -1116,6 +1087,8 @@ class OverlayService : Service() {
     companion object {
         const val ACTION_STOP = "com.example.navassist.STOP"
         const val ACTION_TOGGLE = "com.example.navassist.TOGGLE"
+        const val ACTION_HIDE = "com.example.navassist.HIDE"
+        const val ACTION_SHOW = "com.example.navassist.SHOW"
         private const val CHANNEL_ID = "overlay_channel"
 
         @Volatile

@@ -90,7 +90,7 @@ object Prefs {
     fun setOpacity(c: Context, v: Int) = setI(c, K_OPACITY, v)
     fun orbScale(c: Context): Int = i(c, K_ORB_SCALE, 100)
     fun setOrbScale(c: Context, v: Int) = setI(c, K_ORB_SCALE, v)
-    fun orbIcon(c: Context): String = s(c, K_ORB_ICON, "ring")
+    fun orbIcon(c: Context): String = s(c, K_ORB_ICON, "orb3d_ring")
     fun setOrbIcon(c: Context, v: String) = setS(c, K_ORB_ICON, v)
     /** 0 = circle, 1 = rounded square */
     fun orbShape(c: Context): Int = i(c, K_ORB_SHAPE, 0)

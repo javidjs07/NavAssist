@@ -64,3 +64,22 @@ Model names change over time; edit the model field if a provider retires the def
 - **New buttons:** Wi-Fi, Internet, Bluetooth, Location, Airplane, Brightness, Timeout, Rotation, Sound mode,
   Recorder, Storage, Hide orb, Favorites.
 - **Screen recorder** (resolution, bitrate, fps, mic/mute, saved to Movies/NavAssist).
+
+## What is new in 3.1 (UI redesign)
+Five bottom tabs, each with sub-tabs:
+- **Home** - 3D hero, start/stop, quick setup, quick actions (hide orb, screenshot, record, AI chat, search, test Recents).
+- **Menu** - Layout (live preview, 3x3 / 3x4 / 4x4), Buttons (31 switchable buttons in groups), Gestures (tap / double tap / long press), Favorites.
+- **Style** - Theme (8 themes + 12 accents, live preview), Orb (3D pictures, symbols, emoji, size, opacity), Motion.
+- **Tools** - Recorder, AI (provider, voice language), Test (Recents, screenshot, device info).
+- **Settings** - Setup (permissions + ADB commands with a Copy button), Advanced, About.
+3D artwork (hero, banners, floating orbs, app icon) is pre-rendered; see `store/` for the Play Store images.
+
+## What is new in 4.0 (separate pages + real 3D)
+- **Side menu + 10 separate pages:** Home, Menu & gestures, Design, Recording, Cleaning, Connections, AI assistant, Features, Settings, About us.
+  The bottom bar has Home, Menu, Design, Record and More (opens the side menu).
+- **Real 3D (Three.js r149, bundled offline in `assets/`)** on Home, Features and About: a glossy rotating orb, a tile grid and gyroscope rings.
+  Drag horizontally to spin them. If a phone cannot run WebGL, a pre-rendered picture is shown instead.
+- **3D app-style icons** for every page, new banners and an empty-state illustration.
+- **Recording library:** thumbnails, play, share, delete.
+- **Cleaning:** storage gauge, NavAssist cache, scan screenshots and videos over 100 MB (asks for photo/video access only when you press Scan; deletes need your confirmation).
+- **Connections:** live Wi-Fi / internet / Bluetooth / location / airplane status with one-tap system panels.

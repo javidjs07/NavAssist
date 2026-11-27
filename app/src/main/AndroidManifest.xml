@@ -8,6 +8,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Optional, asked only when you press "Scan" on the Cleaning page. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <!-- Makes NavAssist appear in Settings > Do Not Disturb access (needed for Silent / ringtone volume). -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <!-- Optional special permission: brightness, screen timeout, auto-rotate shortcuts. -->
