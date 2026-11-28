@@ -67,6 +67,10 @@ class OverlayService : Service() {
     private var longFired = false
     private var sliderTouch = false
 
+    private val th get() = Themes.theme(this)
+
+    private fun tint(iv: ImageView): ImageView = Ui.tint(this, iv)
+
     private val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
     private val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
 
@@ -416,7 +420,7 @@ class OverlayService : Service() {
 
     // ---------------------------------------------------------------- menu window
 
-    private fun expand() {
+    private fun expand(initial: (() -> View)? = null) {
         if (scrim != null) return
         val s = FrameLayout(this)
         s.setBackgroundColor(0x70060A14.toInt())
@@ -433,7 +437,7 @@ class OverlayService : Service() {
         )
         lp.blurBehindRadius = dp(24)
         menuPage = 0
-        showCard(s, menuCard())
+        showCard(s, initial?.invoke() ?: menuCard())
         wm.addView(s, lp)
         scrim = s
         applyVisibility()
@@ -501,6 +505,7 @@ class OverlayService : Service() {
         head.gravity = Gravity.CENTER_VERTICAL
         val back = ImageView(this)
         back.setImageResource(R.drawable.ic_back)
+        tint(back)
         back.setPadding(dp(9), dp(9), dp(9), dp(9))
         back.contentDescription = "Back to menu"
         back.setOnClickListener {
@@ -509,7 +514,7 @@ class OverlayService : Service() {
             scrim?.let { showCard(it, menuCard()) }
         }
         head.addView(back, LinearLayout.LayoutParams(dp(38), dp(38)))
-        val t = Ui.text(this, title, 15f, Ui.TEXT, weight = 600)
+        val t = Ui.text(this, title, 15f, th.text, weight = 600)
         t.setPadding(dp(6), 0, 0, 0)
         head.addView(t, LinearLayout.LayoutParams(0, WRAP, 1f))
         card.addView(head)
@@ -537,12 +542,14 @@ class OverlayService : Service() {
         header.gravity = Gravity.CENTER_VERTICAL
         val logo = ImageView(this)
         logo.setImageResource(R.drawable.ic_orb)
+        tint(logo)
         header.addView(logo, LinearLayout.LayoutParams(dp(22), dp(22)))
-        val title = Ui.text(this, "NavAssist", 15f, Ui.TEXT, weight = 600)
+        val title = Ui.text(this, "NavAssist", 15f, th.text, weight = 600)
         title.setPadding(dp(10), 0, 0, 0)
         header.addView(title, LinearLayout.LayoutParams(0, WRAP, 1f))
         val close = ImageView(this)
         close.setImageResource(R.drawable.ic_close)
+        tint(close)
         close.setPadding(dp(9), dp(9), dp(9), dp(9))
         close.alpha = 0.7f
         close.contentDescription = "Close menu"
@@ -566,7 +573,7 @@ class OverlayService : Service() {
             dots.gravity = Gravity.CENTER
             for (p in 0 until pages) {
                 val d = View(this)
-                d.background = Ui.oval(if (p == menuPage) Themes.accent(this) else 0x44FFFFFF)
+                d.background = Ui.oval(if (p == menuPage) Themes.accent(this) else Themes.withAlpha(th.text, 30))
                 val dl = LinearLayout.LayoutParams(dp(7), dp(7))
                 dl.setMargins(dp(4), dp(8), dp(4), 0)
                 dots.addView(d, dl)
@@ -591,11 +598,12 @@ class OverlayService : Service() {
         val chipBg = Ui.menuChipBg(this, accent)
         val chip = ImageView(this)
         chip.setImageResource(a.icon)
+        if (!accent) tint(chip)
         chip.setPadding(dp(14), dp(14), dp(14), dp(14))
         chip.background = Ui.ripple(chipBg, dp(16).toFloat())
         t.addView(chip, LinearLayout.LayoutParams(dp(52), dp(52)))
 
-        val label = Ui.text(this, a.label, 11f, 0xCCFFFFFF.toInt(), weight = 500)
+        val label = Ui.text(this, a.label, 11f, Themes.withAlpha(th.text, 88), weight = 500)
         label.gravity = Gravity.CENTER
         label.maxLines = 1
         label.setPadding(0, dp(5), 0, 0)
@@ -632,9 +640,87 @@ class OverlayService : Service() {
         sb.max = max
         sb.progress = value
         sb.progressTintList = ColorStateList(states, intArrayOf(acc, acc))
-        sb.thumbTintList = ColorStateList(states, intArrayOf(Color.WHITE, Color.WHITE))
-        sb.progressBackgroundTintList = ColorStateList.valueOf(0x44FFFFFF)
+        sb.thumbTintList = ColorStateList(states, intArrayOf(if (th.light) acc else Color.WHITE, if (th.light) acc else Color.WHITE))
+        sb.progressBackgroundTintList = ColorStateList.valueOf(Themes.withAlpha(th.text, 25))
         return sb
+    }
+
+    // ---------------------------------------------------------------- recent apps panel
+
+    /** NavAssist's own recent-tabs screen, used when the phone ignores the system Recents action. */
+    fun showRecentsPanel() {
+        handler.post {
+            if (scrim == null) expand { recentsCard() } else scrim?.let { showCard(it, recentsCard()) }
+        }
+    }
+
+    private fun recentsCard(): View {
+        val card = baseCard()
+        card.minimumWidth = minOf(dp(320), screen().width() - dp(40))
+        val head = LinearLayout(this)
+        head.orientation = LinearLayout.HORIZONTAL
+        head.gravity = Gravity.CENTER_VERTICAL
+        val icon = ImageView(this)
+        icon.setImageResource(R.drawable.ic_history)
+        tint(icon)
+        head.addView(icon, LinearLayout.LayoutParams(dp(22), dp(22)))
+        val title = Ui.text(this, "Recent apps", 15f, th.text, weight = 600)
+        title.setPadding(dp(10), 0, 0, 0)
+        head.addView(title, LinearLayout.LayoutParams(0, WRAP, 1f))
+        val close = ImageView(this)
+        close.setImageResource(R.drawable.ic_close)
+        tint(close)
+        close.setPadding(dp(9), dp(9), dp(9), dp(9))
+        close.alpha = 0.7f
+        close.setOnClickListener { collapse() }
+        head.addView(close, LinearLayout.LayoutParams(dp(38), dp(38)))
+        card.addView(head)
+
+        val apps = RecentApps.list(this, 12)
+        if (apps.isEmpty()) {
+            val n = Ui.text(this, "No recent apps yet.\nOpen a few apps, or allow Usage access so NavAssist can see your history.", 13f, th.muted)
+            n.setPadding(dp(6), dp(14), dp(6), dp(12))
+            card.addView(n)
+            card.addView(pill("Allow usage access") {
+                collapse()
+                handler.postDelayed({ safeStart(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }, 250)
+            }, LinearLayout.LayoutParams(WRAP, WRAP))
+            return card
+        }
+        val tileW = tileWidth(3)
+        for (rowApps in apps.chunked(3)) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            for (pkg in rowApps) {
+                val cell = LinearLayout(this)
+                cell.orientation = LinearLayout.VERTICAL
+                cell.gravity = Gravity.CENTER_HORIZONTAL
+                cell.setPadding(0, dp(8), 0, dp(6))
+                val iv = ImageView(this)
+                try {
+                    iv.setImageDrawable(packageManager.getApplicationIcon(pkg))
+                } catch (e: Exception) {
+                    iv.setImageResource(R.drawable.ic_apps)
+                }
+                cell.addView(iv, LinearLayout.LayoutParams(dp(52), dp(52)))
+                val label = Ui.text(this, Apps.label(this, pkg) ?: pkg, 11f, Themes.withAlpha(th.text, 88), weight = 500)
+                label.gravity = Gravity.CENTER
+                label.maxLines = 1
+                label.setPadding(dp(2), dp(5), dp(2), 0)
+                cell.addView(label)
+                cell.layoutParams = LinearLayout.LayoutParams(tileW, WRAP)
+                cell.background = Ui.ripple(android.graphics.drawable.ColorDrawable(0), dp(14).toFloat())
+                cell.setOnClickListener {
+                    haptic(it)
+                    collapse()
+                    handler.postDelayed({ if (!Apps.launch(this, pkg)) toast("Could not open the app") }, 250)
+                }
+                row.addView(cell)
+            }
+            repeat(3 - rowApps.size) { row.addView(View(this), LinearLayout.LayoutParams(tileW, 1)) }
+            card.addView(row)
+        }
+        return card
     }
 
     // ---------------------------------------------------------------- favorites page
@@ -644,7 +730,7 @@ class OverlayService : Service() {
         subHeader(card, "Favorite apps")
         val favs = Prefs.favorites(this).take(12)
         if (favs.isEmpty()) {
-            val n = Ui.text(this, "No favorites yet.\nChoose them in NavAssist → Menu → Favorite apps.", 13f, Ui.MUTED)
+            val n = Ui.text(this, "No favorites yet.\nChoose them in NavAssist → Menu → Favorite apps.", 13f, th.muted)
             n.setPadding(dp(8), dp(16), dp(8), dp(8))
             card.addView(n)
             return card
@@ -665,7 +751,7 @@ class OverlayService : Service() {
                     icon.setImageResource(R.drawable.ic_apps)
                 }
                 cell.addView(icon, LinearLayout.LayoutParams(dp(48), dp(48)))
-                val label = Ui.text(this, Apps.label(this, pkg) ?: pkg, 11f, 0xCCFFFFFF.toInt(), weight = 500)
+                val label = Ui.text(this, Apps.label(this, pkg) ?: pkg, 11f, Themes.withAlpha(th.text, 88), weight = 500)
                 label.gravity = Gravity.CENTER
                 label.maxLines = 1
                 label.setPadding(dp(2), dp(5), dp(2), 0)
@@ -695,7 +781,7 @@ class OverlayService : Service() {
         card.minimumWidth = minOf(dp(320), screen().width() - dp(40))
         subHeader(card, "Brightness")
         if (!Settings.System.canWrite(this)) {
-            val n = Ui.text(this, "Allow “Modify system settings” once to change brightness from here.", 13f, Ui.MUTED)
+            val n = Ui.text(this, "Allow “Modify system settings” once to change brightness from here.", 13f, th.muted)
             n.setPadding(dp(6), dp(12), dp(6), dp(12))
             card.addView(n)
             card.addView(pill("Allow") { collapse(); openWriteSettings() }, LinearLayout.LayoutParams(WRAP, WRAP))
@@ -709,6 +795,7 @@ class OverlayService : Service() {
         row.setPadding(dp(4), dp(12), dp(4), dp(4))
         val ic = ImageView(this)
         ic.setImageResource(R.drawable.ic_brightness)
+        tint(ic)
         row.addView(ic, LinearLayout.LayoutParams(dp(22), dp(22)))
         val sb = slider(1, 255, cur.coerceIn(1, 255))
         val sl = LinearLayout.LayoutParams(0, WRAP, 1f)
@@ -767,6 +854,32 @@ class OverlayService : Service() {
         return "${((v - mn) * 100 / range).coerceIn(0, 100)}%"
     }
 
+    /**
+     * Sets a stream's volume. Some phones ignore setStreamVolume from other apps, so if the value did not
+     * change we nudge it step by step with adjustStreamVolume (what the volume keys do).
+     */
+    private fun setVolumeSafe(am: AudioManager, stream: Int, target: Int): Boolean {
+        try {
+            am.setStreamVolume(stream, target, 0)
+        } catch (e: SecurityException) {
+            return false
+        }
+        var cur = am.getStreamVolume(stream)
+        var guard = 0
+        while (cur != target && guard < 25) {
+            try {
+                am.adjustStreamVolume(stream, if (target > cur) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER, 0)
+            } catch (e: SecurityException) {
+                break
+            }
+            val next = am.getStreamVolume(stream)
+            if (next == cur) break
+            cur = next
+            guard++
+        }
+        return cur == target
+    }
+
     private fun hasDnd(): Boolean =
         getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted
 
@@ -790,14 +903,14 @@ class OverlayService : Service() {
             for ((v, m) in modeViews) {
                 val on = am.ringerMode == m
                 v.background = Ui.shape(
-                    if (on) acc else 0x1FFFFFFF, dp(12).toFloat(),
-                    if (on) acc else 0x26FFFFFF, dp(1)
+                    if (on) acc else Themes.withAlpha(th.text, 12), dp(12).toFloat(),
+                    if (on) acc else Themes.withAlpha(th.text, 16), dp(1)
                 )
-                v.setTextColor(if (on) Color.WHITE else Ui.MUTED)
+                v.setTextColor(if (on) Color.WHITE else th.muted)
             }
         }
         for ((name, mode) in modeDefs) {
-            val v = Ui.text(this, name, 12.5f, Ui.MUTED, weight = 500)
+            val v = Ui.text(this, name, 12.5f, th.muted, weight = 500)
             v.gravity = Gravity.CENTER
             v.setPadding(0, dp(9), 0, dp(9))
             v.setOnClickListener {
@@ -830,6 +943,7 @@ class OverlayService : Service() {
             row.setPadding(dp(4), dp(8), dp(4), dp(2))
             val ic = ImageView(this)
             ic.setImageResource(icon)
+            tint(ic)
             ic.alpha = 0.9f
             val icLp = LinearLayout.LayoutParams(dp(22), dp(22))
             icLp.marginEnd = dp(12)
@@ -839,8 +953,8 @@ class OverlayService : Service() {
             col.orientation = LinearLayout.VERTICAL
             val top = LinearLayout(this)
             top.orientation = LinearLayout.HORIZONTAL
-            val pct = Ui.text(this, "", 12f, Ui.MUTED)
-            top.addView(Ui.text(this, name, 13f, Ui.TEXT, weight = 500), LinearLayout.LayoutParams(0, WRAP, 1f))
+            val pct = Ui.text(this, "", 12f, th.muted)
+            top.addView(Ui.text(this, name, 13f, th.text, weight = 500), LinearLayout.LayoutParams(0, WRAP, 1f))
             top.addView(pct)
             col.addView(top)
 
@@ -849,11 +963,7 @@ class OverlayService : Service() {
             sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
                     if (!fromUser) return
-                    try {
-                        am.setStreamVolume(stream, p, 0)
-                    } catch (e: SecurityException) {
-                        toast("Allow “Do Not Disturb access” in NavAssist → Setup to change this")
-                    }
+                    if (!setVolumeSafe(am, stream, p)) toast("Allow “Do Not Disturb access” in NavAssist → Setup to change this")
                     pct.text = pctText(am, stream, am.getStreamVolume(stream))
                 }
 
@@ -875,10 +985,13 @@ class OverlayService : Service() {
             "Meetings use “Call” volume; YouTube and music use “Media”. " +
                 "Android does not let third-party apps change volume per individual app." +
                 if (hasDnd()) "" else "\nRingtone and Silent need Do Not Disturb access (NavAssist → Setup).",
-            11f, Ui.MUTED
+            11f, th.muted
         )
         note.setPadding(dp(4), dp(10), dp(4), 0)
+        note.maxWidth = minOf(dp(330), screen().width() - dp(40)) - dp(28)
         card.addView(note)
+        card.addView(pill("Open system volume panel") { collapse(); handler.postDelayed({ safeStart(Intent(Settings.Panel.ACTION_VOLUME)) }, 250) },
+            LinearLayout.LayoutParams(WRAP, WRAP).also { it.topMargin = dp(10) })
         handler.removeCallbacks(mixerTick)
         handler.postDelayed(mixerTick, 500)
         return card
@@ -915,7 +1028,11 @@ class OverlayService : Service() {
         when (a) {
             NavAction.HOME -> safeStart(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
             NavAction.BACK -> global(AccessibilityService.GLOBAL_ACTION_BACK)
-            NavAction.RECENTS -> withService { it.openRecents(Prefs.recentsMode(this)) }
+            NavAction.RECENTS -> {
+                val svc = NavAccessibilityService.instance
+                if (svc != null) svc.openRecents(Prefs.recentsMode(this)) else showRecentsPanel()
+            }
+            NavAction.RECENT_APPS -> showRecentsPanel()
             NavAction.NOTIFICATIONS -> withService { it.openNotifications() }
             NavAction.QUICK_SETTINGS -> withService { it.openQuickSettings() }
             NavAction.LOCK -> global(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
@@ -972,9 +1089,12 @@ class OverlayService : Service() {
     private fun volume(direction: Int) {
         val am = getSystemService(AudioManager::class.java)
         val inCall = am.mode == AudioManager.MODE_IN_CALL || am.mode == AudioManager.MODE_IN_COMMUNICATION
-        val stream = if (inCall) AudioManager.STREAM_VOICE_CALL else AudioManager.STREAM_MUSIC
         try {
-            am.adjustStreamVolume(stream, direction, AudioManager.FLAG_SHOW_UI)
+            if (inCall) {
+                am.adjustStreamVolume(AudioManager.STREAM_VOICE_CALL, direction, AudioManager.FLAG_SHOW_UI)
+            } else {
+                am.adjustSuggestedStreamVolume(direction, AudioManager.USE_DEFAULT_STREAM_TYPE, AudioManager.FLAG_SHOW_UI)
+            }
         } catch (e: SecurityException) {
             toast("Volume could not be changed")
         }

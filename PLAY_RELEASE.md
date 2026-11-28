@@ -25,4 +25,6 @@ You still need 2+ real phone screenshots (take them on your phone).
 11. **Photo and video permissions policy.** READ_MEDIA_IMAGES / READ_MEDIA_VIDEO are used only by the optional Cleaning scan. Google restricts these
     permissions to apps whose core feature needs broad access. If review objects, remove the "Find big files" section (Cleaner.largeVideos / screenshots)
     and the two permissions; the rest of the app keeps working (NavAssist's own recordings need no permission).
-12. **WebView.** The 3D scenes load only bundled local files (no network). Mention Three.js (MIT) in your open-source notices.
+12. **Usage access (PACKAGE_USAGE_STATS).** Used only by the optional Recent apps panel. It is a sensitive special permission; describe it in
+    the listing and the Data safety form (app names stay on the device). If review objects, delete RecentApps.hasUsageAccess/list's usage-stats block
+    and the manifest line; the panel still works from the foreground apps the accessibility service sees.

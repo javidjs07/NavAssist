@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.navassist"
         minSdk = 31
         targetSdk = 34
-        versionCode = 7
-        versionName = "4.0"
+        versionCode = 9
+        versionName = "4.2"
     }
 
     buildTypes {

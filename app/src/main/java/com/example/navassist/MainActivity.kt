@@ -1,7 +1,6 @@
 package com.example.navassist
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.NotificationManager
@@ -30,11 +29,9 @@ import android.provider.Settings
 import android.text.InputType
 import android.util.Size
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
-import android.webkit.WebView
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -78,7 +75,6 @@ class MainActivity : Activity() {
     private val navLabels = ArrayList<TextView>()
     private val drawerRows = ArrayList<Pair<Int, LinearLayout>>()
     private val handler = Handler(Looper.getMainLooper())
-    private val scenes = HashMap<String, WebView>()
     private var lastSig = ""
     private var page = 0
     private val sub = IntArray(10)
@@ -111,7 +107,7 @@ class MainActivity : Activity() {
         "Device default" to "", "English (India)" to "en-IN", "English (US)" to "en-US",
         "తెలుగు" to "te-IN", "हिन्दी" to "hi-IN", "தமிழ்" to "ta-IN", "ಕನ್ನಡ" to "kn-IN"
     )
-    private val recentsModes = listOf("Auto", "System", "Swipe", "Launcher")
+    private val recentsModes = listOf("Auto", "System", "Swipe", "Launcher", "NavAssist panel")
     private val resolutions = listOf("Auto", "1080p", "720p", "480p")
     private val bitrates = listOf("4 Mbps", "8 Mbps", "12 Mbps")
     private val fpsList = listOf("30 fps", "60 fps")
@@ -124,7 +120,7 @@ class MainActivity : Activity() {
     }
 
     private val groups = listOf(
-        "Navigation" to listOf(NavAction.HOME, NavAction.BACK, NavAction.RECENTS, NavAction.NOTIFICATIONS,
+        "Navigation" to listOf(NavAction.HOME, NavAction.BACK, NavAction.RECENTS, NavAction.RECENT_APPS, NavAction.NOTIFICATIONS,
             NavAction.QUICK_SETTINGS, NavAction.LOCK, NavAction.POWER, NavAction.SCREENSHOT),
         "Sound & display" to listOf(NavAction.VOLUME_UP, NavAction.VOLUME_DOWN, NavAction.MIXER, NavAction.SOUND_MODE,
             NavAction.BRIGHTNESS, NavAction.TIMEOUT, NavAction.ROTATION),
@@ -183,24 +179,13 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        scenes.values.forEach { it.onResume() }
         refresh(true)
         handler.postDelayed(ticker, 1200)
     }
 
     override fun onPause() {
         handler.removeCallbacks(ticker)
-        scenes.values.forEach { it.onPause() }
         super.onPause()
-    }
-
-    override fun onDestroy() {
-        scenes.values.forEach {
-            (it.parent as? ViewGroup)?.removeView(it)
-            it.destroy()
-        }
-        scenes.clear()
-        super.onDestroy()
     }
 
     @Deprecated("Deprecated in Java")
@@ -249,7 +234,7 @@ class MainActivity : Activity() {
 
     private fun signature(): String = listOf(
         hasNotif(), hasMic(), hasDnd(), Settings.System.canWrite(this), Settings.canDrawOverlays(this),
-        Access.isEnabled(this), Access.isRunning(), OverlayService.running, RecordService.recording,
+        Access.isEnabled(this), Access.isRunning(), OverlayService.running, RecordService.recording, RecentApps.hasUsageAccess(this),
         AiConfig.load(this).ready, Access.canWriteSecure(this)
     ).joinToString("|")
 
@@ -383,7 +368,7 @@ class MainActivity : Activity() {
         names.orientation = LinearLayout.VERTICAL
         names.setPadding(dp(12), 0, 0, 0)
         names.addView(Ui.text(this, "NavAssist", 20f, Ui.TEXT, weight = 700))
-        names.addView(Ui.text(this, "Version 4.0", 12f, Ui.MUTED))
+        names.addView(Ui.text(this, "Version 4.2", 12f, Ui.MUTED))
         head.addView(names)
         col.addView(head)
 
@@ -454,66 +439,6 @@ class MainActivity : Activity() {
         }, lp(MATCH, WRAP).also { it.bottomMargin = dp(14) })
     }
 
-    // ---------------------------------------------------------------- 3D scene (Three.js in a WebView)
-
-    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
-    private fun scene3d(name: String, heightDp: Int, fallback: Int, shift: Int): View {
-        val box = FrameLayout(this)
-        box.background = Ui.card3d(this, 22)
-        box.clipToOutline = true
-        val img = ImageView(this)
-        img.setImageResource(fallback)
-        img.scaleType = ImageView.ScaleType.CENTER_CROP
-        box.addView(img, FrameLayout.LayoutParams(MATCH, MATCH))
-        val key = "$name$shift"
-        var wv = scenes[key]
-        if (wv == null) {
-            wv = WebView(this)
-            wv.setBackgroundColor(Color.TRANSPARENT)
-            wv.overScrollMode = View.OVER_SCROLL_NEVER
-            wv.isVerticalScrollBarEnabled = false
-            wv.isHorizontalScrollBarEnabled = false
-            wv.settings.javaScriptEnabled = true
-            wv.settings.allowFileAccess = true
-            wv.settings.allowContentAccess = false
-            var downX = 0f
-            var downY = 0f
-            wv.setOnTouchListener { v, e ->
-                when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y }
-                    MotionEvent.ACTION_MOVE ->
-                        v.parent?.requestDisallowInterceptTouchEvent(Math.abs(e.x - downX) > Math.abs(e.y - downY))
-                }
-                false
-            }
-            wv.loadUrl("file:///android_asset/hero3d.html?scene=$name&shift=$shift")
-            scenes[key] = wv
-        }
-        (wv.parent as? ViewGroup)?.removeView(wv)
-        box.addView(wv, FrameLayout.LayoutParams(MATCH, MATCH))
-        box.layoutParams = lp(MATCH, dp(heightDp))
-        box.elevation = dp(4).toFloat()
-        return box
-    }
-
-    /** 3D scene with a title and subtitle written over its left half. */
-    private fun sceneBanner(name: String, title: String, sub: String, heightDp: Int, fallback: Int): View {
-        val frame = FrameLayout(this)
-        frame.addView(scene3d(name, heightDp, fallback, 1), FrameLayout.LayoutParams(MATCH, MATCH))
-        val txt = LinearLayout(this)
-        txt.orientation = LinearLayout.VERTICAL
-        txt.gravity = Gravity.CENTER_VERTICAL
-        txt.setPadding(dp(18), dp(10), dp(8), dp(10))
-        txt.addView(Ui.text(this, title, 22f, Ui.TEXT, weight = 700))
-        val s = Ui.text(this, sub, 12f, Ui.MUTED)
-        s.setPadding(0, dp(6), 0, 0)
-        txt.addView(s)
-        txt.isClickable = false
-        frame.addView(txt, FrameLayout.LayoutParams((resources.displayMetrics.widthPixels * 0.46f).toInt(), MATCH))
-        frame.layoutParams = lp(MATCH, dp(heightDp))
-        return frame
-    }
-
     // ---------------------------------------------------------------- HOME
 
     private fun homePage(col: LinearLayout) {
@@ -521,7 +446,7 @@ class MainActivity : Activity() {
         val overlay = Settings.canDrawOverlays(this)
         val a11y = Access.isEnabled(this)
 
-        col.addView(sceneBanner("orb", "Your buttons,\nright on screen.", "Home · Back · Recents\nPower · Volume · AI", 230, R.drawable.hero_3d))
+        col.addView(banner(R.drawable.hero_3d, "Your buttons,\nright on screen.", "Home · Back · Recents · Power\nVolume · Recorder · AI chat", 200))
 
         col.addView(bigButton(if (running) "Stop floating assistant" else "Start floating assistant",
             if (running) R.drawable.ic_stop else R.drawable.ic_play, if (running) Ui.RED else Ui.VIOLET) { toggleOverlay() },
@@ -983,12 +908,14 @@ class MainActivity : Activity() {
         val cols = Prefs.menuCols(this)
         val rows = Prefs.menuRows(this)
         val all = Prefs.enabledActions(this)
+        val th = Themes.theme(this)
         val head = LinearLayout(this)
         head.gravity = Gravity.CENTER_VERTICAL
         val lg = ImageView(this)
         lg.setImageResource(R.drawable.ic_orb)
+        Ui.tint(this, lg)
         head.addView(lg, lp(dp(16), dp(16)))
-        val tt = Ui.text(this, "NavAssist", 11.5f, Ui.TEXT, weight = 600)
+        val tt = Ui.text(this, "NavAssist", 11.5f, th.text, weight = 600)
         tt.setPadding(dp(6), 0, 0, 0)
         head.addView(tt)
         panel.addView(head)
@@ -1002,10 +929,11 @@ class MainActivity : Activity() {
                 cell.setPadding(0, dp(5), 0, dp(2))
                 val iv = ImageView(this)
                 iv.setImageResource(a.icon)
+                if (a != NavAction.AI) Ui.tint(this, iv)
                 iv.setPadding(dp(9), dp(9), dp(9), dp(9))
                 iv.background = Ui.menuChipBg(this, a == NavAction.AI)
                 cell.addView(iv, lp(dp(40), dp(40)))
-                val l = Ui.text(this, a.label, 9f, 0xCCFFFFFF.toInt(), weight = 500)
+                val l = Ui.text(this, a.label, 9f, Themes.withAlpha(th.text, 88), weight = 500)
                 l.maxLines = 1
                 l.setPadding(0, dp(2), 0, 0)
                 cell.addView(l)
@@ -1388,7 +1316,7 @@ class MainActivity : Activity() {
     private class Feature(val title: String, val desc: String, val pic: Int, val page: Int, val sub: Int = 0)
 
     private fun featuresPage(col: LinearLayout) {
-        col.addView(sceneBanner("tiles", "Everything\nin one place.", "Tap a feature to open it", 220, R.drawable.banner_menu))
+        col.addView(banner(R.drawable.banner_features, "Everything\nin one place.", "Tap a feature to open it", 150))
         col.addView(spacer(8))
         val features = listOf(
             Feature("Floating menu", "A glass panel with up to 31 buttons: Home, Back, Recents, Power, Volume and more.", R.drawable.i3d_menu, 1, 1),
@@ -1458,6 +1386,10 @@ class MainActivity : Activity() {
         setup.addView(stepRow(5, "Modify system settings", "Optional: brightness, timeout, rotation", Settings.System.canWrite(this), "Open") {
             safeOpen(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName")))
         })
+        setup.addView(divider())
+        setup.addView(stepRow(6, "Usage access", "Optional: real history for the Recent apps panel", RecentApps.hasUsageAccess(this), "Open") {
+            safeOpen(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        })
         col.addView(setup)
         if (!Access.isEnabled(this)) col.addView(restrictedCard())
 
@@ -1467,7 +1399,8 @@ class MainActivity : Activity() {
             "adb shell settings put secure enabled_accessibility_services $packageName/$packageName.NavAccessibilityService\n" +
             "adb shell settings put secure accessibility_enabled 1\n" +
             "adb shell cmd notification allow_dnd $packageName\n" +
-            "adb shell appops set $packageName WRITE_SETTINGS allow"
+            "adb shell appops set $packageName WRITE_SETTINGS allow\n" +
+            "adb shell appops set $packageName GET_USAGE_STATS allow"
         val c = card()
         c.setPadding(dp(14), dp(12), dp(14), dp(12))
         val code = Ui.text(this, cmds, 10.5f, 0xFFCBD5E1.toInt())
@@ -1499,7 +1432,7 @@ class MainActivity : Activity() {
 
     private fun settingsTest(col: LinearLayout) {
         settingChips(col, "RECENTS METHOD", recentsModes, Prefs.recentsMode(this)) { Prefs.setRecentsMode(this, it) }
-        col.addView(Ui.text(this, "Auto tries the system action first, then a swipe-up-and-hold gesture if the phone ignores it.", 12f, Ui.MUTED))
+        col.addView(Ui.text(this, "Auto tries the system action, then a swipe-up-and-hold gesture, and finally NavAssist’s own recent apps panel.", 12f, Ui.MUTED))
         col.addView(bigButton("Test Recents now", R.drawable.ic_recents, Ui.VIOLET) { testRecents() },
             lp(MATCH, dp(52)).also { it.topMargin = dp(10); it.bottomMargin = dp(8) })
         col.addView(bigButton("Screenshot in 4 seconds", R.drawable.ic_crop, 0xFF0EA5E9.toInt()) { screenshotSoon() },
@@ -1520,7 +1453,7 @@ class MainActivity : Activity() {
     // ---------------------------------------------------------------- ABOUT
 
     private fun aboutPage(col: LinearLayout) {
-        col.addView(sceneBanner("rings", "NavAssist", "Version 4.0\nNo ads · No tracking", 220, R.drawable.banner_settings))
+        col.addView(banner(R.drawable.banner_about, "NavAssist", "Version 4.2\nNo ads · No tracking", 150))
         col.addView(spacer(8))
         val c = card()
         c.setPadding(dp(16), dp(16), dp(16), dp(16))
@@ -1543,8 +1476,12 @@ class MainActivity : Activity() {
         })
         c2.addView(divider())
         c2.addView(linkRow("Contact the developer", "Send feedback by email") {
-            safeOpen(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:your-email@example.com")).putExtra(Intent.EXTRA_SUBJECT, "NavAssist feedback"))
+            safeOpen(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + Config.SUPPORT_EMAIL)).putExtra(Intent.EXTRA_SUBJECT, "NavAssist feedback"))
         })
+        if (Config.PRIVACY_URL.isNotBlank()) {
+            c2.addView(divider())
+            c2.addView(linkRow("Privacy policy", "How NavAssist treats your data") { safeOpen(Intent(Intent.ACTION_VIEW, Uri.parse(Config.PRIVACY_URL))) })
+        }
         c2.addView(divider())
         c2.addView(linkRow("Share NavAssist", "Help someone with a broken button") {
             val send = Intent(Intent.ACTION_SEND).setType("text/plain")
@@ -1556,7 +1493,7 @@ class MainActivity : Activity() {
         col.addView(label("OPEN-SOURCE LICENCES"))
         val c3 = card()
         c3.setPadding(dp(16), dp(14), dp(16), dp(14))
-        c3.addView(Ui.text(this, "Inter font © The Inter Project Authors, SIL Open Font License 1.1.\nThree.js © three.js authors, MIT License (used for the 3D scenes).", 12.5f, Ui.MUTED))
+        c3.addView(Ui.text(this, "Inter font © The Inter Project Authors, SIL Open Font License 1.1.\nAll 3D artwork was created for this app.", 12.5f, Ui.MUTED))
         col.addView(c3)
     }
 
@@ -1869,7 +1806,9 @@ class MainActivity : Activity() {
                     "you tap in its floating menu: Back, Recents, Notifications, Quick settings, " +
                     "Lock screen, Power menu and Screenshot. If your phone ignores the normal Recents " +
                     "action, it can perform a swipe gesture for you.\n\n" +
-                    "It does not read your screen, record what you type, or collect or share any data."
+                    "To build the Recent apps list it also notes which app is in the foreground " +
+                    "(the app name only, stored on this phone).\n\n" +
+                    "It does not read what is on your screen, record what you type, or collect or share any data."
             )
             .setPositiveButton("Agree & continue") { _, _ ->
                 if (Access.canWriteSecure(this) && Access.enableSelf(this)) {
@@ -1895,6 +1834,7 @@ class MainActivity : Activity() {
                 "fallback" -> "System action was ignored, so the swipe gesture was used"
                 "gesture" -> "Recents requested with a swipe gesture"
                 "launcher" -> "Recents opened with a launcher shortcut"
+                "panel" -> "Showing NavAssist’s own recent apps panel"
                 else -> "This method did not work. Try another Recents method."
             }
             Toast.makeText(applicationContext, msg, Toast.LENGTH_LONG).show()

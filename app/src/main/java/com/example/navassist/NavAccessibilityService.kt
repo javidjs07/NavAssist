@@ -22,7 +22,10 @@ class NavAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        val pkg = event?.packageName?.toString() ?: return
+        if (pkg == packageName) return // our own overlay windows do not count as "the screen changed"
         lastEventAt = SystemClock.uptimeMillis()
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) RecentApps.record(this, pkg)
     }
 
     override fun onInterrupt() {}
@@ -64,16 +67,33 @@ class NavAccessibilityService : AccessibilityService() {
         }, 700)
     }
 
-    /** mode: 0 auto, 1 system action only, 2 swipe gesture, 3 launcher shortcut */
+    /**
+     * mode: 0 auto (system action, then swipe gesture, then NavAssist's own panel),
+     * 1 system action only, 2 swipe gesture, 3 launcher shortcut, 4 NavAssist panel
+     */
     fun openRecents(mode: Int, report: ((String) -> Unit)? = null) {
         when (mode) {
             1 -> run(GLOBAL_ACTION_RECENTS, null, report)
             2 -> report?.invoke(if (swipeUpAndHold()) "gesture" else "failed")
             3 -> report?.invoke(if (launcherRecents()) "launcher" else "failed")
+            4 -> {
+                showPanel()
+                report?.invoke("panel")
+            }
             else -> run(GLOBAL_ACTION_RECENTS, {
-                if (!swipeUpAndHold()) launcherRecents()
+                val t0 = SystemClock.uptimeMillis()
+                if (!swipeUpAndHold()) {
+                    showPanel()
+                } else {
+                    // if the gesture did not change the screen either, show NavAssist's own recent apps
+                    handler.postDelayed({ if (lastEventAt < t0) showPanel() }, 1600)
+                }
             }, report)
         }
+    }
+
+    private fun showPanel() {
+        OverlayService.instance?.showRecentsPanel()
     }
 
     fun openNotifications(report: ((String) -> Unit)? = null) =

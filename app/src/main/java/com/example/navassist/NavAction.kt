@@ -10,6 +10,7 @@ enum class NavAction(
     HOME("Home", R.drawable.ic_home),
     BACK("Back", R.drawable.ic_back),
     RECENTS("Recents", R.drawable.ic_recents),
+    RECENT_APPS("Recent apps", R.drawable.ic_history, default = false),
     NOTIFICATIONS("Notifications", R.drawable.ic_notifications),
     QUICK_SETTINGS("Quick panel", R.drawable.ic_apps),
     LOCK("Lock", R.drawable.ic_lock),

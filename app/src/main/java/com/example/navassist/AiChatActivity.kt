@@ -202,7 +202,7 @@ class AiChatActivity : Activity(), TextToSpeech.OnInitListener {
         e.addView(hello)
         val sub = Ui.text(
             this,
-            if (cfg.ready) "Type a message or tap the mic and just talk."
+            if (cfg.ready) "Type a message or tap the mic and just talk. AI replies can be wrong, so double-check anything important."
             else "Add an API key from OpenAI, Anthropic, Google Gemini or any OpenAI-compatible service. Your key is encrypted on this phone.",
             13.5f, Ui.MUTED
         )
@@ -250,6 +250,35 @@ class AiChatActivity : Activity(), TextToSpeech.OnInitListener {
         return t
     }
 
+    /** Required by Google Play for apps with generative AI: let people report a reply. */
+    private fun addReportLink(reply: String) {
+        val r = Ui.text(this, "Report this reply", 11.5f, Ui.MUTED)
+        r.paintFlags = r.paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+        r.setPadding(dp(6), dp(4), dp(6), dp(4))
+        r.setOnClickListener {
+            val reasons = arrayOf("Offensive or harmful", "Wrong or misleading", "Something else")
+            android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Report this reply")
+                .setItems(reasons) { _, i ->
+                    val body = "Reason: ${reasons[i]}\n\nAI provider: ${AiConfig.load(this).provider.label}\n\nReply:\n$reply"
+                    try {
+                        startActivity(
+                            Intent(Intent.ACTION_SENDTO, android.net.Uri.parse("mailto:" + Config.SUPPORT_EMAIL))
+                                .putExtra(Intent.EXTRA_SUBJECT, "NavAssist AI reply report")
+                                .putExtra(Intent.EXTRA_TEXT, body)
+                        )
+                    } catch (e: Exception) {
+                        Toast.makeText(this, "No email app found", Toast.LENGTH_LONG).show()
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+        val lp = LinearLayout.LayoutParams(WRAP, WRAP)
+        lp.gravity = Gravity.START
+        col.addView(r, lp)
+    }
+
     // ------------------------------------------------------------------ chatting
 
     private fun send(raw: String, viaVoice: Boolean) {
@@ -279,6 +308,7 @@ class AiChatActivity : Activity(), TextToSpeech.OnInitListener {
                 thinking.text = res.text
                 if (res.ok) {
                     history.add(ChatMsg("assistant", res.text))
+                    addReportLink(res.text)
                     if (speakReplies && voiceTurn) speak(res.text)
                 } else {
                     history.removeAt(history.size - 1)

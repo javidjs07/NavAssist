@@ -74,12 +74,18 @@ Five bottom tabs, each with sub-tabs:
 - **Settings** - Setup (permissions + ADB commands with a Copy button), Advanced, About.
 3D artwork (hero, banners, floating orbs, app icon) is pre-rendered; see `store/` for the Play Store images.
 
-## What is new in 4.0 (separate pages + real 3D)
-- **Side menu + 10 separate pages:** Home, Menu & gestures, Design, Recording, Cleaning, Connections, AI assistant, Features, Settings, About us.
-  The bottom bar has Home, Menu, Design, Record and More (opens the side menu).
-- **Real 3D (Three.js r149, bundled offline in `assets/`)** on Home, Features and About: a glossy rotating orb, a tile grid and gyroscope rings.
-  Drag horizontally to spin them. If a phone cannot run WebGL, a pre-rendered picture is shown instead.
-- **3D app-style icons** for every page, new banners and an empty-state illustration.
-- **Recording library:** thumbnails, play, share, delete.
-- **Cleaning:** storage gauge, NavAssist cache, scan screenshots and videos over 100 MB (asks for photo/video access only when you press Scan; deletes need your confirmation).
-- **Connections:** live Wi-Fi / internet / Bluetooth / location / airplane status with one-tap system panels.
+## What is new in 4.1
+- **Recent apps that really show up.** The Recents button now tries the system action, then a swipe-up-and-hold gesture, and if the
+  phone still shows nothing it opens NavAssist's own **Recent apps panel** (works in any theme, even without the accessibility service).
+  Add the "Recent apps" button to always open the panel. For a full history allow **Settings -> Setup -> Usage access**
+  (ADB: `adb shell appops set com.example.navassist GET_USAGE_STATS allow`).
+- **Volume mixer fix:** sliders now fall back to stepping the volume like the hardware keys, and there is an "Open system volume panel" button.
+  Vol +/- again follow the stream that is actually playing (YouTube/music).
+- **Light menu theme** (Design -> Theme -> Light) with dark text and icons; the menu, mixer and Recent apps panel all follow it.
+- Restored the static hero banner (with its title) and removed the 3D WebView scenes.
+- 10 separate pages with a side menu, 3D page icons, recording library, cleaning and connections pages (from 4.0).
+
+## 4.2
+- "Report this reply" link under every AI reply (needed for Google Play's generative-AI policy). Set your email in `Config.kt` (also used by About > Contact).
+- The volume mixer card no longer stretches across the whole screen.
+- `TEST_CHECKLIST.md`: a 14-step check to run on your phone.

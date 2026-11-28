@@ -2,7 +2,10 @@ package com.example.navassist
 
 import android.content.Context
 
-data class MenuTheme(val name: String, val top: Int, val bottom: Int, val stroke: Int)
+data class MenuTheme(
+    val name: String, val top: Int, val bottom: Int, val stroke: Int,
+    val text: Int = 0xFFF9FAFB.toInt(), val muted: Int = 0xFF9CA3AF.toInt(), val light: Boolean = false
+)
 
 /** Menu panel themes and accent colors (inspired by the colour pickers in popular assistive-touch apps). */
 object Themes {
@@ -16,7 +19,8 @@ object Themes {
         MenuTheme("Emerald", c(0xFF0D4B40), c(0xFF0A1517), c(0xFF16796A)),
         MenuTheme("Royal", c(0xFF2563EB), c(0xFF4F2EE8), c(0xFF6B8CF5)),
         MenuTheme("Rose", c(0xFF7A1F4A), c(0xFF1E0F1A), c(0xFFB03A74)),
-        MenuTheme("Graphite", c(0xFF26262B), c(0xFF121214), c(0xFF3A3A42))
+        MenuTheme("Graphite", c(0xFF26262B), c(0xFF121214), c(0xFF3A3A42)),
+        MenuTheme("Light", c(0xFFF8FAFC), c(0xFFE2E8F0), c(0xFFCBD5E1), c(0xFF0F172A), c(0xFF475569), true)
     )
 
     val accents = intArrayOf(

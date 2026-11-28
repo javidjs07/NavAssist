@@ -147,8 +147,16 @@ object Ui {
 
     fun menuChipBg(c: Context, accent: Boolean): GradientDrawable = when {
         accent -> shape(Themes.accent(c), dp(c, 16).toFloat())
+        Prefs.iconTiles(c) && Themes.theme(c).light -> shape(0x14000000, dp(c, 16).toFloat(), 0x22000000, dp(c, 1))
         Prefs.iconTiles(c) -> shape(0x1FFFFFFF, dp(c, 16).toFloat(), 0x26FFFFFF, dp(c, 1))
         else -> shape(0x00000000, dp(c, 16).toFloat())
+    }
+
+    /** Dark icons on the Light menu theme, white icons otherwise. */
+    fun tint(c: Context, iv: ImageView): ImageView {
+        val th = Themes.theme(c)
+        if (th.light) iv.setColorFilter(th.text) else iv.clearColorFilter()
+        return iv
     }
 
     /** The floating orb as drawn on screen (also used for the live preview in the app). */
